@@ -145,7 +145,8 @@ jobs:
             for f in "$OO_PS4_TOOLCHAIN"/samples/keyboard/keyboard/keyboard.*; do echo "--- $f"; cat "$f"; done
             echo "== orbis/Mouse.h =="; cat "$OO_PS4_TOOLCHAIN/include/orbis/Mouse.h"
             echo "== _types con mouse/keyboard =="; ls "$OO_PS4_TOOLCHAIN/include/orbis/_types" | grep -iE 'mouse|keyboard|pad' || true
-            echo "== Sysmodule: ids de entrada =="; grep -n -iE 'MOUSE|KEYBOARD|PAD' "$OO_PS4_TOOLCHAIN/include/orbis/Sysmodule.h" || true
+            echo "== Sysmodule: ids de entrada =="; grep -rn -iE 'SYSMODULE_.*(MOUSE|KEYBOARD|PAD)' "$OO_PS4_TOOLCHAIN/include" || true
+            echo "== UserService.h =="; grep -n -iE 'GetInitialUser|Initialize|USER_ID' "$OO_PS4_TOOLCHAIN/include/orbis/UserService.h" || true
           } > logs/input-refs.txt 2>&1
 
       - name: Compilar (EBOOT + PKG)
@@ -171,7 +172,7 @@ jobs:
             cp -r "$copia/SDL2/sce_sys" "$work/sce_sys"
             cp -r "$copia/SDL2/sce_module" "$work/sce_module"
             rm -f "$work/sce_sys/param.sfo"
-            cp "$GITHUB_WORKSPACE"/app/*.cpp "$work/$proj/"
+            cp "$GITHUB_WORKSPACE"/app/*.cpp "$GITHUB_WORKSPACE"/app/*.h "$work/$proj/"
             # Clase Keyboard del sample 'keyboard' (keyboard.h/.cpp) para leer el teclado con libSceKeyboard.
             cp "$copia"/keyboard/keyboard/keyboard.* "$work/$proj/"
             # Identidad propia del PKG (CONTENT_ID = 36 caracteres) y sin los .cpp de _common (traen dependencias del sample).
@@ -180,7 +181,7 @@ jobs:
               -e 's/^TITLE_ID +:=.*/TITLE_ID    := RENP00001/' \
               -e 's/^CONTENT_ID +:=.*/CONTENT_ID  := IV0000-RENP00001_00-RENPYPS4TEST0000/' \
               -e 's/^COMMONFILES +:=.*/COMMONFILES :=/' \
-              -e 's/^(LIBS +:=.*)$/\1 -lSceKeyboard/' \
+              -e 's/^(LIBS +:=.*)$/\1 -lSceKeyboard -lSceMouse/' \
               "$work/Makefile"
             echo "Target: hello (app/*.cpp)" | tee logs/sample-elegido.txt
           else
