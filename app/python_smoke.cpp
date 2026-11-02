@@ -22,8 +22,11 @@ static void log_message(const char* format, ...) {
 
 int main() {
     mkdir("/data/renpy", 0777);
-    g_log = freopen("/data/renpy/python-smoke.log", "w", stderr);
-    if (!g_log) g_log = freopen("/data/renpy_python_smoke.log", "w", stderr);
+    g_log = fopen("/data/renpy/python-smoke.log", "w");
+    if (!g_log) g_log = fopen("/data/renpy_python_smoke.log", "w");
+    if (!freopen("/data/renpy/python-stderr.log", "w", stderr)) {
+        log_message("No se pudo redirigir stderr; el log principal sigue activo");
+    }
 
     log_message("== CPython PS4 smoke test ==");
 
