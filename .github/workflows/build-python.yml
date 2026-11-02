@@ -127,6 +127,21 @@ jobs:
           int sysctl(const int *name, unsigned int namelen, void *oldp, size_t *oldlenp, const void *newp, size_t newlen);
           EOF
 
+      # d_ino: posixmodule.c usa dirent->d_ino; FreeBSD lo llama d_fileno. Se inspecciona la cabecera de OpenOrbis
+      # (queda en logs-python/dirent.txt) y, si solo existe d_fileno, se anade un #define en ps4_compat.h.
+      - name: Compat dirent (d_ino)
+        run: |
+          mkdir -p logs-python
+          files=""
+          for f in "$OO_PS4_TOOLCHAIN/include/dirent.h" "$OO_PS4_TOOLCHAIN/include/sys/dirent.h"; do [ -f "$f" ] && files="$files $f"; done
+          { echo "archivos: $files"; grep -nE 'd_fileno|d_ino|struct dirent' $files; } 2>&1 | tee logs-python/dirent.txt || true
+          if grep -qE '\bd_fileno\b' $files 2>/dev/null && ! grep -qE '\bd_ino\b' $files 2>/dev/null; then
+            echo '#define d_ino d_fileno' >> "$HOME/stubs/ps4_compat.h"
+            echo "Anadido: #define d_ino d_fileno" | tee -a logs-python/dirent.txt
+          else
+            echo "No se anadio define (revisa dirent.txt)" | tee -a logs-python/dirent.txt
+          fi
+
       # Valores que configure no puede averiguar al cross-compilar (no puede ejecutar nada de la PS4).
       - name: config.site
         run: |
@@ -140,6 +155,9 @@ jobs:
           ac_cv_working_tzset=yes
           ac_cv_pthread_is_default=yes
           ac_cv_computed_gotos=yes
+          ac_cv_header_stropts_h=no
+          ac_cv_func_chflags=no
+          ac_cv_func_lchflags=no
           EOF
           sed -i 's/^          //' "$HOME/config.site"
 
