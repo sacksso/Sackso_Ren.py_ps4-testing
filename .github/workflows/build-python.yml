@@ -47,6 +47,21 @@ jobs:
           sudo apt-get install -y -qq clang lld llvm make zip unzip python3.12 pkg-config
           { clang --version | head -1; llvm-ar --version | head -1; python3.12 --version; } 2>&1 | tee logs-python/versions.txt
 
+      - name: Instalar libssl1.1 para PkgTool.Core
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          ok=0
+          for u in \
+            "http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb" \
+            "http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb"; do
+            if wget -q "$u" -O libssl1.1.deb; then ok=1; echo "Descargado: $u"; break; fi
+          done
+          [ "$ok" = 1 ] || { echo "::error::No pude descargar libssl1.1"; exit 1; }
+          sudo dpkg -i libssl1.1.deb
+          ldconfig -p | grep -E 'libssl\.so' | tee "$GITHUB_WORKSPACE/logs-python/libssl.txt"
+          echo "CLR_OPENSSL_VERSION_OVERRIDE=1.1" >> "$GITHUB_ENV"
+
       - name: Descargar el toolchain de OpenOrbis
         env:
           TAG: ${{ inputs.toolchain_tag }}
@@ -185,6 +200,45 @@ jobs:
           cp libpython3*.a "$GITHUB_WORKSPACE/dist-python/" 2>/dev/null || true
           [ -f libpython3.12.a ] || { echo "::error::No se genero libpython3.12.a. Mira logs-python/make.log"; exit 1; }
 
+      - name: Preparar biblioteca estandar minima
+        run: |
+          set -euo pipefail
+          mkdir -p dist-python
+          (cd cpython/Lib && zip -0 -q -r "$GITHUB_WORKSPACE/dist-python/python312.zip" encodings codecs.py)
+
+      - name: Construir PKG de prueba Python
+        run: |
+          set -euo pipefail
+          cp build/libpython3.12.a "$OO_PS4_TOOLCHAIN/lib/"
+          samples="$RUNNER_TEMP/python-smoke-samples"
+          rm -rf "$samples"
+          cp -r "$OO_PS4_TOOLCHAIN/samples" "$samples"
+          work="$samples/renpyps4"
+          mkdir -p "$work/renpyps4" "$work/assets/python"
+          cp "$samples/SDL2/Makefile" "$work/Makefile"
+          cp -r "$samples/SDL2/sce_sys" "$work/sce_sys"
+          cp -r "$samples/SDL2/sce_module" "$work/sce_module"
+          rm -f "$work/sce_sys/param.sfo"
+          cp app/python_smoke.cpp "$work/renpyps4/main.cpp"
+          cp dist-python/python312.zip "$work/assets/python/stdlib.zip"
+          sed -i -E \
+            -e 's/^TITLE +:=.*/TITLE       := RenPy Python Smoke Test/' \
+            -e 's/^TITLE_ID +:=.*/TITLE_ID    := RENP00001/' \
+            -e 's/^CONTENT_ID +:=.*/CONTENT_ID  := IV0000-RENP00001_00-RENPYPS4TEST0000/' \
+            -e 's/^COMMONFILES +:=.*/COMMONFILES :=/' \
+            -e 's/^(LIBS +:=)/\1 -lpython3.12 -lm/' \
+            -e '/^CXXFLAGS[[:space:]]*:=/a CXXFLAGS += -fshort-wchar -I'"$GITHUB_WORKSPACE"'/cpython/Include -I'"$GITHUB_WORKSPACE"'/build' \
+            "$work/Makefile"
+          mkdir -p "$GITHUB_WORKSPACE/dist-python-smoke"
+          cd "$work"
+          set +e
+          make 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/smoke-build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          [ "$rc" -eq 0 ] || { echo "::error::No se pudo construir el PKG de prueba Python"; exit "$rc"; }
+          find . -name '*.pkg' -exec cp {} "$GITHUB_WORKSPACE/dist-python-smoke/" \;
+          [ -n "$(find "$GITHUB_WORKSPACE/dist-python-smoke" -name '*.pkg' -print -quit)" ] || { echo "::error::No se genero el PKG de prueba Python"; exit 1; }
+
       - name: Resumen de lo que falta en la libc
         if: always()
         run: |
@@ -206,9 +260,17 @@ jobs:
           if-no-files-found: ignore
 
       - name: Subir libpython
-        if: success()
+        if: always() && hashFiles('dist-python/libpython3.12.a') != ''
         uses: actions/upload-artifact@v4
         with:
           name: python-ps4
           path: dist-python
+          if-no-files-found: error
+
+      - name: Subir PKG de prueba Python
+        if: always() && hashFiles('dist-python-smoke/*.pkg') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-ps4-smoke
+          path: dist-python-smoke
           if-no-files-found: error
