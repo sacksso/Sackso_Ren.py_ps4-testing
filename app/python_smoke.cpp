@@ -43,6 +43,14 @@ static void probe_module(const char* name) {
     PyErr_Clear();
 }
 
+static void log_object_repr(const char* label, PyObject* object) {
+    PyObject* repr = object ? PyObject_Repr(object) : nullptr;
+    const char* text = repr ? PyUnicode_AsUTF8(repr) : nullptr;
+    log_message("%s=%s", label, text ? text : "unavailable");
+    Py_XDECREF(repr);
+    PyErr_Clear();
+}
+
 int main() {
     mkdir("/data/renpy", 0777);
     std::remove("/data/renpy/getpath-error.log");
@@ -114,8 +122,33 @@ int main() {
     Py_DECREF(answer);
     Py_DECREF(version);
 
+    log_object_repr("sys.path", PySys_GetObject("path"));
+    log_object_repr("sys.path_hooks", PySys_GetObject("path_hooks"));
+    probe_module("zipimport");
+    PyObject* zip_spec = PyRun_String(
+        "__import__('zipimport').zipimporter('/app0/assets/stdlib.zip').find_spec('json')",
+        Py_eval_input, globals, globals);
+    if (zip_spec) {
+        log_object_repr("zipimport json spec", zip_spec);
+        Py_DECREF(zip_spec);
+    } else {
+        PyObject* type = nullptr;
+        PyObject* value = nullptr;
+        PyObject* traceback = nullptr;
+        PyErr_Fetch(&type, &value, &traceback);
+        PyObject* message = value ? PyObject_Str(value) : nullptr;
+        const char* message_text = message ? PyUnicode_AsUTF8(message) : nullptr;
+        log_message("zipimport json spec failed: %s",
+                    message_text ? message_text : "sin detalle");
+        Py_XDECREF(message);
+        Py_XDECREF(type);
+        Py_XDECREF(value);
+        Py_XDECREF(traceback);
+        PyErr_Clear();
+    }
+
     static const char* const modules[] = {
-        "os", "json", "math", "_struct", "binascii", "zlib", "select",
+        "os", "json", "collections", "copyreg", "math", "_struct", "binascii", "zlib", "select",
         "_socket", "_random", "_datetime", "_json", "array", "unicodedata",
         "_pickle", "_hashlib", "_md5", "_sha1", "_sha2", "hashlib",
     };
