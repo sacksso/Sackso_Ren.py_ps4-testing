@@ -200,11 +200,11 @@ jobs:
           cp libpython3*.a "$GITHUB_WORKSPACE/dist-python/" 2>/dev/null || true
           [ -f libpython3.12.a ] || { echo "::error::No se genero libpython3.12.a. Mira logs-python/make.log"; exit 1; }
 
-      - name: Preparar biblioteca estandar minima
+      - name: Preparar biblioteca estandar para la prueba
         run: |
           set -euo pipefail
           mkdir -p dist-python
-          (cd cpython/Lib && zip -0 -q -r "$GITHUB_WORKSPACE/dist-python/python312.zip" encodings codecs.py)
+          (cd cpython/Lib && zip -0 -q -r "$GITHUB_WORKSPACE/dist-python/python312.zip" .)
 
       - name: Construir PKG de prueba Python
         run: |
