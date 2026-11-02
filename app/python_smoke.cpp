@@ -24,9 +24,6 @@ int main() {
     mkdir("/data/renpy", 0777);
     g_log = fopen("/data/renpy/python-smoke.log", "w");
     if (!g_log) g_log = fopen("/data/renpy_python_smoke.log", "w");
-    if (!freopen("/data/renpy/python-stderr.log", "w", stderr)) {
-        log_message("No se pudo redirigir stderr; el log principal sigue activo");
-    }
 
     log_message("== CPython PS4 smoke test ==");
 
@@ -36,29 +33,8 @@ int main() {
     config.use_hash_seed = 1;
     config.hash_seed = 0;
 
-    PyStatus status = PyConfig_SetString(&config, &config.program_name, L"/app0/eboot.bin");
-    if (!PyStatus_Exception(status)) {
-        status = PyConfig_SetString(&config, &config.executable, L"/app0/eboot.bin");
-    }
-    if (!PyStatus_Exception(status)) {
-        status = PyConfig_SetString(&config, &config.base_executable, L"/app0/eboot.bin");
-    }
-    if (!PyStatus_Exception(status)) {
-        status = PyConfig_SetString(&config, &config.prefix, L"/app0");
-    }
-    if (!PyStatus_Exception(status)) {
-        status = PyConfig_SetString(&config, &config.base_prefix, L"/app0");
-    }
-    if (!PyStatus_Exception(status)) {
-        status = PyConfig_SetString(&config, &config.exec_prefix, L"/app0");
-    }
-    if (!PyStatus_Exception(status)) {
-        status = PyConfig_SetString(&config, &config.base_exec_prefix, L"/app0");
-    }
-    if (!PyStatus_Exception(status)) {
-        status = PyWideStringList_Append(
-            &config.module_search_paths, L"/app0/assets/stdlib.zip");
-    }
+    PyStatus status = PyWideStringList_Append(
+        &config.module_search_paths, L"/app0/assets/stdlib.zip");
     if (!PyStatus_Exception(status)) {
         status = Py_InitializeFromConfig(&config);
     }
