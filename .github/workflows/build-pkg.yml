@@ -146,6 +146,7 @@ jobs:
             echo "== orbis/Mouse.h =="; cat "$OO_PS4_TOOLCHAIN/include/orbis/Mouse.h"
             echo "== _types con mouse/keyboard =="; ls "$OO_PS4_TOOLCHAIN/include/orbis/_types" | grep -iE 'mouse|keyboard|pad' || true
             echo "== Sysmodule: ids de entrada =="; grep -rn -iE 'SYSMODULE_.*(MOUSE|KEYBOARD|PAD)' "$OO_PS4_TOOLCHAIN/include" || true
+            echo "== kernel: LoadStartModule / Dlsym =="; grep -rn -E 'sceKernelLoadStartModule|sceKernelDlsym' "$OO_PS4_TOOLCHAIN/include/orbis" | head -10 || true
             echo "== UserService.h =="; grep -n -iE 'GetInitialUser|Initialize|USER_ID' "$OO_PS4_TOOLCHAIN/include/orbis/UserService.h" || true
           } > logs/input-refs.txt 2>&1
 
@@ -181,7 +182,7 @@ jobs:
               -e 's/^TITLE_ID +:=.*/TITLE_ID    := RENP00001/' \
               -e 's/^CONTENT_ID +:=.*/CONTENT_ID  := IV0000-RENP00001_00-RENPYPS4TEST0000/' \
               -e 's/^COMMONFILES +:=.*/COMMONFILES :=/' \
-              -e 's/^(LIBS +:=.*)$/\1 -lSceKeyboard -lSceMouse/' \
+              -e 's/^(LIBS +:=.*)$/\1 -lSceKeyboard/' \
               "$work/Makefile"
             echo "Target: hello (app/*.cpp)" | tee logs/sample-elegido.txt
           else
