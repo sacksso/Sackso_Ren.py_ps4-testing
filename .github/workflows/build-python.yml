@@ -288,21 +288,6 @@ jobs:
           freeze_path.write_text(freeze_source.replace(freeze_entry, "        '<encodings.*>',\n", 1))
           subprocess.run(["python3.12", str(freeze_path), "--frozen-modules"], check=True)
 
-          setup_local = Path("cpython/Modules/Setup.local")
-          setup_local.write_text(
-              "*static*\n"
-              "_datetime _datetimemodule.c\n"
-              "_json _json.c\n"
-              "_pickle _pickle.c\n"
-              "_random _randommodule.c\n"
-              "_socket socketmodule.c\n"
-              "_struct _struct.c\n"
-              "array arraymodule.c\n"
-              "binascii binascii.c\n"
-              "math mathmodule.c\n"
-              "select selectmodule.c\n"
-              "unicodedata unicodedata.c\n"
-          )
           PY
 
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
@@ -396,6 +381,25 @@ jobs:
             --prefix=/usr/local \
             CC=orbis-cc CPP="orbis-cc -E" AR=llvm-ar RANLIB=llvm-ranlib READELF=llvm-readelf \
             CFLAGS="-O2 -DHAVE_BROKEN_POSIX_SEMAPHORES" 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/configure.log"
+
+      - name: Configurar módulos builtin
+        run: |
+          cat > cpython/Modules/Setup.local <<'EOF'
+          *static*
+          _datetime _datetimemodule.c
+          _json _json.c
+          _pickle _pickle.c
+          _random _randommodule.c
+          _socket socketmodule.c
+          _struct _struct.c
+          array arraymodule.c
+          binascii binascii.c
+          math mathmodule.c
+          select selectmodule.c
+          unicodedata unicodedata.c
+          EOF
+          sed -i 's/^          //' cpython/Modules/Setup.local
+          cp cpython/Modules/Setup.local logs-python/modules-setup.txt
 
       - name: Compilar libpython (solo la libreria estatica)
         run: |
