@@ -165,6 +165,31 @@ jobs:
           thread_path = Path("cpython/Modules/_threadmodule.c")
           thread_source = thread_path.read_text()
           thread_include = '#include "structmember.h"         // PyMemberDef\n'
+          thread_helper = (
+              "static void renpy_log_rlock_stack(FILE *log)\n"
+              "{\n"
+              "    PyFrameObject *frame = PyThreadState_GetFrame(PyThreadState_Get());\n"
+              "    int depth = 0;\n"
+              "    while (frame && depth < 12) {\n"
+              "        PyCodeObject *code = PyFrame_GetCode(frame);\n"
+              "        PyObject *name = code ? PyObject_GetAttrString((PyObject *)code, \"co_name\") : NULL;\n"
+              "        PyObject *filename = code ? PyObject_GetAttrString((PyObject *)code, \"co_filename\") : NULL;\n"
+              "        const char *name_text = name ? PyUnicode_AsUTF8(name) : NULL;\n"
+              "        const char *filename_text = filename ? PyUnicode_AsUTF8(filename) : NULL;\n"
+              "        fprintf(log, \"frame[%d]: %s at %s:%d\\n\", depth,\n"
+              "                name_text ? name_text : \"?\",\n"
+              "                filename_text ? filename_text : \"?\",\n"
+              "                PyFrame_GetLineNumber(frame));\n"
+              "        Py_XDECREF(filename);\n"
+              "        Py_XDECREF(name);\n"
+              "        Py_XDECREF(code);\n"
+              "        PyFrameObject *back = PyFrame_GetBack(frame);\n"
+              "        Py_DECREF(frame);\n"
+              "        frame = back;\n"
+              "        depth++;\n"
+              "    }\n"
+              "}\n\n"
+            )
           thread_needle = (
               "    if (self->rlock_count == 0 || self->rlock_owner != tid) {\n"
               "        PyErr_SetString(PyExc_RuntimeError,\n"
@@ -176,6 +201,7 @@ jobs:
               "        if (log) {\n"
               "            fprintf(log, \"rlock mismatch: count=%lu owner=%lu current=%lu\\n\",\n"
               "                    self->rlock_count, self->rlock_owner, tid);\n"
+              "            renpy_log_rlock_stack(log);\n"
               "            fclose(log);\n"
               "        }\n"
               "        PyErr_SetString(PyExc_RuntimeError,\n"
@@ -183,7 +209,9 @@ jobs:
           )
           if thread_source.count(thread_include) != 1 or thread_source.count(thread_needle) != 1:
               raise SystemExit("No pude identificar de forma unica el error de RLock esperado")
-          thread_source = thread_source.replace(thread_include, thread_include + "#include <stdio.h>\n", 1)
+          thread_source = thread_source.replace(
+              thread_include, thread_include + "#include <stdio.h>\n" + thread_helper, 1
+          )
           thread_source = thread_source.replace(thread_needle, thread_replacement, 1)
           thread_save_needle = (
               "    if (self->rlock_count == 0) {\n"
@@ -196,6 +224,7 @@ jobs:
               "        if (log) {\n"
               "            fprintf(log, \"rlock release_save: count=%lu owner=%lu current=%lu\\n\",\n"
               "                    self->rlock_count, self->rlock_owner, PyThread_get_thread_ident());\n"
+              "            renpy_log_rlock_stack(log);\n"
               "            fclose(log);\n"
               "        }\n"
               "        PyErr_SetString(PyExc_RuntimeError,\n"
