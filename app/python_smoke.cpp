@@ -33,8 +33,17 @@ int main() {
     config.use_hash_seed = 1;
     config.hash_seed = 0;
 
-    PyStatus status = PyWideStringList_Append(
-        &config.module_search_paths, L"/app0/assets/stdlib.zip");
+    PyStatus status = PyConfig_SetString(&config, &config.program_name, L"/app0/eboot.bin");
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.executable, L"/app0/eboot.bin");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.home, L"/app0");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyWideStringList_Append(
+            &config.module_search_paths, L"/app0/assets/stdlib.zip");
+    }
     if (!PyStatus_Exception(status)) {
         status = Py_InitializeFromConfig(&config);
     }
