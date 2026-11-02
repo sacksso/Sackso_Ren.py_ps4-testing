@@ -33,15 +33,37 @@ int main() {
     config.use_hash_seed = 1;
     config.hash_seed = 0;
 
-    PyStatus status = PyWideStringList_Append(
-        &config.module_search_paths, L"/app0/assets/stdlib.zip");
+    PyStatus status = PyConfig_SetString(&config, &config.program_name, L"/app0/eboot.bin");
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.executable, L"/app0/eboot.bin");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.base_executable, L"/app0/eboot.bin");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.prefix, L"/app0");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.base_prefix, L"/app0");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.exec_prefix, L"/app0");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.base_exec_prefix, L"/app0");
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyWideStringList_Append(
+            &config.module_search_paths, L"/app0/assets/stdlib.zip");
+    }
     if (!PyStatus_Exception(status)) {
         status = Py_InitializeFromConfig(&config);
     }
 
     if (PyStatus_Exception(status)) {
-        log_message("Py_InitializeFromConfig fallo: %s",
-                    status.err_msg ? status.err_msg : "sin detalle");
+        log_message("Py_InitializeFromConfig fallo: %s (funcion=%s)",
+                    status.err_msg ? status.err_msg : "sin detalle",
+                    status.func ? status.func : "desconocida");
         PyConfig_Clear(&config);
         if (g_log) fclose(g_log);
         return 1;
