@@ -136,6 +136,14 @@ jobs:
               done
             done
           } > logs/sample-refs.txt 2>&1
+          # Entrada nativa: que stubs y cabeceras hay para teclado y raton, y el codigo de la clase Keyboard.
+          {
+            echo "== lib: keyboard/mouse/ime/pad/input =="; ls "$OO_PS4_TOOLCHAIN/lib" | grep -iE 'keyboard|mouse|ime|pad|input|usb|hid' || true
+            echo "== include: ficheros con Mouse o Keyboard en el nombre =="; find "$OO_PS4_TOOLCHAIN/include" \( -iname '*mouse*' -o -iname '*keyboard*' \) | head -30
+            echo "== include: ficheros que mencionan sceMouse =="; grep -rIl "sceMouse" "$OO_PS4_TOOLCHAIN/include" 2>/dev/null | head -20 || true
+            echo "== samples/keyboard/keyboard =="; ls -la "$OO_PS4_TOOLCHAIN/samples/keyboard/keyboard"
+            for f in "$OO_PS4_TOOLCHAIN"/samples/keyboard/keyboard/keyboard.*; do echo "--- $f"; cat "$f"; done
+          } > logs/input-refs.txt 2>&1
 
       - name: Compilar (EBOOT + PKG)
         if: ${{ !inputs.recon_only }}
@@ -161,12 +169,15 @@ jobs:
             cp -r "$copia/SDL2/sce_module" "$work/sce_module"
             rm -f "$work/sce_sys/param.sfo"
             cp "$GITHUB_WORKSPACE"/app/*.cpp "$work/$proj/"
+            # Clase Keyboard del sample 'keyboard' (keyboard.h/.cpp) para leer el teclado con libSceKeyboard.
+            cp "$copia"/keyboard/keyboard/keyboard.* "$work/$proj/"
             # Identidad propia del PKG (CONTENT_ID = 36 caracteres) y sin los .cpp de _common (traen dependencias del sample).
             sed -i -E \
               -e 's/^TITLE +:=.*/TITLE       := RenPy PS4 Test/' \
               -e 's/^TITLE_ID +:=.*/TITLE_ID    := RENP00001/' \
               -e 's/^CONTENT_ID +:=.*/CONTENT_ID  := IV0000-RENP00001_00-RENPYPS4TEST0000/' \
               -e 's/^COMMONFILES +:=.*/COMMONFILES :=/' \
+              -e 's/^(LIBS +:=.*)$/\1 -lSceKeyboard/' \
               "$work/Makefile"
             echo "Target: hello (app/*.cpp)" | tee logs/sample-elegido.txt
           else
