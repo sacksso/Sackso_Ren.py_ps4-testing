@@ -91,7 +91,7 @@ jobs:
           cat > "$HOME/bin/orbis-cc" <<'EOF'
           #!/bin/bash
           OO="$OO_PS4_TOOLCHAIN"
-          base=(clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -fshort-wchar -isysroot "$OO" -isystem "$HOME/stubs" -isystem "$OO/include")
+          base=(clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -fshort-wchar -isysroot "$OO" -include "$HOME/stubs/ps4_compat.h" -isystem "$HOME/stubs" -isystem "$OO/include")
           only_compile=0
           for a in "$@"; do
             case "$a" in
@@ -112,6 +112,19 @@ jobs:
           #include <pthread.h>
           #include <stdint.h>
           static inline int pthread_getthreadid_np(void) { return (int)(intptr_t)pthread_self(); }
+          EOF
+          # closefrom(): CPython lo usa en _Py_closerange (rama __FreeBSD__) y la libc de OpenOrbis no lo declara.
+          cat > "$HOME/stubs/ps4_compat.h" <<'EOF'
+          #pragma once
+          extern int close(int);
+          static inline void closefrom(int lowfd) { for (int fd = lowfd; fd < 256; fd++) close(fd); }
+          EOF
+          # sys/sysctl.h: posixmodule.c lo incluye (rama __FreeBSD__) y OpenOrbis no lo trae.
+          mkdir -p "$HOME/stubs/sys"
+          cat > "$HOME/stubs/sys/sysctl.h" <<'EOF'
+          #pragma once
+          #include <stddef.h>
+          int sysctl(const int *name, unsigned int namelen, void *oldp, size_t *oldlenp, const void *newp, size_t newlen);
           EOF
 
       # Valores que configure no puede averiguar al cross-compilar (no puede ejecutar nada de la PS4).
