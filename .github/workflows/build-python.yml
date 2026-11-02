@@ -287,6 +287,22 @@ jobs:
               raise SystemExit("No pude encontrar de forma unica la entrada encodings de freeze_modules.py")
           freeze_path.write_text(freeze_source.replace(freeze_entry, "        '<encodings.*>',\n", 1))
           subprocess.run(["python3.12", str(freeze_path), "--frozen-modules"], check=True)
+
+          setup_local = Path("cpython/Modules/Setup.local")
+          setup_local.write_text(
+              "*static*\n"
+              "_datetime _datetimemodule.c\n"
+              "_json _json.c\n"
+              "_pickle _pickle.c\n"
+              "_random _randommodule.c\n"
+              "_socket socketmodule.c\n"
+              "_struct _struct.c\n"
+              "array arraymodule.c\n"
+              "binascii binascii.c\n"
+              "math mathmodule.c\n"
+              "select selectmodule.c\n"
+              "unicodedata unicodedata.c\n"
+          )
           PY
 
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
