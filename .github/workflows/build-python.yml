@@ -214,18 +214,19 @@ jobs:
           rm -rf "$samples"
           cp -r "$OO_PS4_TOOLCHAIN/samples" "$samples"
           work="$samples/renpyps4"
-          mkdir -p "$work/renpyps4" "$work/assets/python"
+          mkdir -p "$work/renpyps4" "$work/assets"
           cp "$samples/SDL2/Makefile" "$work/Makefile"
           cp -r "$samples/SDL2/sce_sys" "$work/sce_sys"
           cp -r "$samples/SDL2/sce_module" "$work/sce_module"
           rm -f "$work/sce_sys/param.sfo"
           cp app/python_smoke.cpp "$work/renpyps4/main.cpp"
-          cp dist-python/python312.zip "$work/assets/python/stdlib.zip"
+          cp dist-python/python312.zip "$work/assets/stdlib.zip"
           sed -i -E \
             -e 's/^TITLE +:=.*/TITLE       := RenPy Python Smoke Test/' \
             -e 's/^TITLE_ID +:=.*/TITLE_ID    := RENP00001/' \
             -e 's/^CONTENT_ID +:=.*/CONTENT_ID  := IV0000-RENP00001_00-RENPYPS4TEST0000/' \
             -e 's/^COMMONFILES +:=.*/COMMONFILES :=/' \
+            -e 's|^ASSETS.*|ASSETS      := assets/stdlib.zip|' \
             -e 's/^(LIBS +:=)/\1 -lpython3.12 -lm/' \
             -e '/^CXXFLAGS[[:space:]]*:=/a CXXFLAGS += -fshort-wchar -I'"$GITHUB_WORKSPACE"'/cpython/Include -I'"$GITHUB_WORKSPACE"'/build' \
             "$work/Makefile"

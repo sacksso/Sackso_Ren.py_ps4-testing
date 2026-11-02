@@ -32,7 +32,7 @@ int main() {
     config.module_search_paths_set = 1;
 
     PyStatus status = PyWideStringList_Append(
-        &config.module_search_paths, L"/app0/assets/python/stdlib.zip");
+        &config.module_search_paths, L"/app0/assets/stdlib.zip");
     if (!PyStatus_Exception(status)) {
         status = Py_InitializeFromConfig(&config);
     }
