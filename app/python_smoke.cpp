@@ -53,6 +53,29 @@ static void log_object_repr(const char* label, PyObject* object) {
     PyErr_Clear();
 }
 
+static void probe_expression(const char* label, const char* expression, PyObject* globals) {
+    PyObject* result = PyRun_String(expression, Py_eval_input, globals, globals);
+    if (result) {
+        log_object_repr(label, result);
+        Py_DECREF(result);
+        return;
+    }
+
+    PyObject* type = nullptr;
+    PyObject* value = nullptr;
+    PyObject* traceback = nullptr;
+    PyErr_Fetch(&type, &value, &traceback);
+    PyObject* message = value ? PyObject_Str(value) : nullptr;
+    const char* message_text = message ? PyUnicode_AsUTF8(message) : nullptr;
+    log_message("%s failed: %s", label,
+                message_text ? message_text : "sin detalle");
+    Py_XDECREF(message);
+    Py_XDECREF(type);
+    Py_XDECREF(value);
+    Py_XDECREF(traceback);
+    PyErr_Clear();
+}
+
 int main() {
     mkdir("/data/renpy", 0777);
     std::remove("/data/renpy/getpath-error.log");
@@ -139,29 +162,13 @@ int main() {
     log_object_repr("sys.path", PySys_GetObject("path"));
     log_object_repr("sys.path_hooks", PySys_GetObject("path_hooks"));
     probe_module("zipimport");
-    PyObject* file_probe = PyRun_String(
-        "(__import__('os').stat('/app0/assets/stdlib.zip').st_size, "
-        "(lambda f: (f.read(4), f.seek(0, 2), f.tell(), f.close())) "
-        "(open('/app0/assets/stdlib.zip', 'rb'))) ",
-        Py_eval_input, globals, globals);
-    if (file_probe) {
-        log_object_repr("python stdlib file probe", file_probe);
-        Py_DECREF(file_probe);
-    } else {
-        PyObject* type = nullptr;
-        PyObject* value = nullptr;
-        PyObject* traceback = nullptr;
-        PyErr_Fetch(&type, &value, &traceback);
-        PyObject* message = value ? PyObject_Str(value) : nullptr;
-        const char* message_text = message ? PyUnicode_AsUTF8(message) : nullptr;
-        log_message("python stdlib file probe failed: %s",
-                    message_text ? message_text : "sin detalle");
-        Py_XDECREF(message);
-        Py_XDECREF(type);
-        Py_XDECREF(value);
-        Py_XDECREF(traceback);
-        PyErr_Clear();
-    }
+    probe_expression("python os.stat size",
+                     "__import__('os').stat('/app0/assets/stdlib.zip').st_size", globals);
+    probe_expression("python open read",
+                     "open('/app0/assets/stdlib.zip', 'rb').read(4)", globals);
+    probe_expression("python open seek",
+                     "(lambda f: (f.seek(0, 2), f.close()))(open('/app0/assets/stdlib.zip', 'rb'))",
+                     globals);
     PyObject* zip_spec = PyRun_String(
         "__import__('zipimport').zipimporter('/app0/assets/stdlib.zip').find_spec('json')",
         Py_eval_input, globals, globals);
