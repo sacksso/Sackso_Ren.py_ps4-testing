@@ -9,7 +9,9 @@ name: Build PKG
 #
 # INTERRUPTORES (Run workflow):
 #   toolchain_tag  Tag del release de OpenOrbis (latest = el ultimo). Sirve para fijar una version que ya funcione.
-#   sample         Carpeta de samples/ a compilar (auto = la primera cuyo nombre contenga 'sdl').
+#   target         hello = nuestro codigo de app/ (hello world SDL2 con diagnostico de entrada y audio);
+#                  sample = el sample SDL2 de OpenOrbis tal cual.
+#   sample         Carpeta de samples/ a compilar cuando target=sample (auto = la primera cuyo nombre contenga 'sdl').
 #   recon_only     Solo descarga el toolchain y lista assets/samples; no compila.
 # Verificacion siempre activa: el SHA-256 del PKG contra su .sha256 (error si no coincide).
 
@@ -20,8 +22,15 @@ on:
         description: 'Tag del release de OpenOrbis (latest = el ultimo)'
         type: string
         default: 'latest'
+      target:
+        description: 'Que compilar: hello (nuestro app/main.cpp) o sample (sample de OpenOrbis)'
+        type: choice
+        options:
+          - hello
+          - sample
+        default: 'hello'
       sample:
-        description: 'Carpeta de samples a compilar (auto = la primera con SDL en el nombre)'
+        description: 'Solo con target=sample: carpeta de samples a compilar (auto = la primera con SDL)'
         type: string
         default: 'auto'
       recon_only:
@@ -117,27 +126,60 @@ jobs:
             echo "== SDL en el toolchain =="; find "$OO_PS4_TOOLCHAIN" -maxdepth 3 -iname '*sdl*' | head -40
           } 2>&1 | tee logs/recon.txt
           ls "$OO_PS4_TOOLCHAIN/samples" > logs/samples.txt
+          # Referencias para saber como inicializan SDL, teclado, audio y mando los samples oficiales.
+          {
+            for d in SDL2 keyboard audio-wav input; do
+              echo "################ samples/$d"
+              grep -n "LIBS" "$OO_PS4_TOOLCHAIN/samples/$d/Makefile" 2>/dev/null || true
+              find "$OO_PS4_TOOLCHAIN/samples/$d" -maxdepth 2 -type f \( -name 'main.c' -o -name 'main.cpp' \) | head -1 | while read -r f; do
+                echo "--- $f"; head -150 "$f"
+              done
+            done
+          } > logs/sample-refs.txt 2>&1
 
-      - name: Compilar el sample (EBOOT + PKG)
+      - name: Compilar (EBOOT + PKG)
         if: ${{ !inputs.recon_only }}
         env:
+          TARGET: ${{ inputs.target }}
           SAMPLE: ${{ inputs.sample }}
         run: |
           set -euo pipefail
-          if [ "$SAMPLE" = "auto" ]; then
-            s=$(ls "$OO_PS4_TOOLCHAIN/samples" | grep -i sdl | head -1 || true)
-          else
-            s="$SAMPLE"
-          fi
-          [ -n "$s" ] && [ -d "$OO_PS4_TOOLCHAIN/samples/$s" ] || { echo "::error::Sample no encontrado ('$s'). Mira logs/samples.txt"; exit 1; }
-          echo "Sample: $s" | tee logs/sample-elegido.txt
-
           # Se compila en una copia de TODA la carpeta samples para no tocar el toolchain y conservar la estructura:
           # el Makefile usa el nombre de la carpeta actual (PROJDIR) para buscar los fuentes en <PROJDIR>/*.cpp
-          # y el codigo incluye ../../_common/*.h, asi que _common debe quedar al lado del sample.
+          # y el codigo de los samples incluye ../../_common/*.h, asi que _common debe quedar al lado.
           copia="$RUNNER_TEMP/samples"
           rm -rf "$copia"; cp -r "$OO_PS4_TOOLCHAIN/samples" "$copia"
-          work="$copia/$s"
+
+          if [ "$TARGET" = "hello" ]; then
+            # Nuestro proyecto: reutiliza Makefile, sce_sys y sce_module del sample SDL2 (right.sprx, icono, libc.prx...)
+            # y pone nuestro codigo de app/ en <proyecto>/<proyecto>/.
+            proj=renpyps4
+            work="$copia/$proj"
+            mkdir -p "$work/$proj"
+            cp "$copia/SDL2/Makefile" "$work/Makefile"
+            cp -r "$copia/SDL2/sce_sys" "$work/sce_sys"
+            cp -r "$copia/SDL2/sce_module" "$work/sce_module"
+            rm -f "$work/sce_sys/param.sfo"
+            cp "$GITHUB_WORKSPACE"/app/*.cpp "$work/$proj/"
+            # Identidad propia del PKG (CONTENT_ID = 36 caracteres) y sin los .cpp de _common (traen dependencias del sample).
+            sed -i -E \
+              -e 's/^TITLE +:=.*/TITLE       := RenPy PS4 Test/' \
+              -e 's/^TITLE_ID +:=.*/TITLE_ID    := RENP00001/' \
+              -e 's/^CONTENT_ID +:=.*/CONTENT_ID  := IV0000-RENP00001_00-RENPYPS4TEST0000/' \
+              -e 's/^COMMONFILES +:=.*/COMMONFILES :=/' \
+              "$work/Makefile"
+            echo "Target: hello (app/*.cpp)" | tee logs/sample-elegido.txt
+          else
+            if [ "$SAMPLE" = "auto" ]; then
+              s=$(ls "$OO_PS4_TOOLCHAIN/samples" | grep -i sdl | head -1 || true)
+            else
+              s="$SAMPLE"
+            fi
+            [ -n "$s" ] && [ -d "$OO_PS4_TOOLCHAIN/samples/$s" ] || { echo "::error::Sample no encontrado ('$s'). Mira logs/samples.txt"; exit 1; }
+            work="$copia/$s"
+            echo "Target: sample $s" | tee logs/sample-elegido.txt
+          fi
+
           cd "$work"
           echo "== Makefile ==" > "$GITHUB_WORKSPACE/logs/makefile.txt"
           cat Makefile >> "$GITHUB_WORKSPACE/logs/makefile.txt" 2>&1 || echo "(sin Makefile)" >> "$GITHUB_WORKSPACE/logs/makefile.txt"
