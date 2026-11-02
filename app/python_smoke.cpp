@@ -24,6 +24,7 @@ int main() {
     mkdir("/data/renpy", 0777);
     std::remove("/data/renpy/getpath-error.log");
     std::remove("/data/renpy/import-error.log");
+    std::remove("/data/renpy/rlock-error.log");
     g_log = fopen("/data/renpy/python-smoke.log", "w");
     if (!g_log) g_log = fopen("/data/renpy_python_smoke.log", "w");
 

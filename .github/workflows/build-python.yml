@@ -161,6 +161,30 @@ jobs:
               raise SystemExit("No pude identificar de forma unica el error de importlib esperado")
           import_source = import_source.replace(import_include, import_include + "#include <stdio.h>\n", 1)
           import_path.write_text(import_source.replace(import_needle, import_capture + import_needle, 1))
+
+          thread_path = Path("cpython/Modules/_threadmodule.c")
+          thread_source = thread_path.read_text()
+          thread_include = '#include "structmember.h"         // PyMemberDef\n'
+          thread_needle = (
+              "    if (self->rlock_count == 0 || self->rlock_owner != tid) {\n"
+              "        PyErr_SetString(PyExc_RuntimeError,\n"
+              "                        \"cannot release un-acquired lock\");"
+          )
+          thread_replacement = (
+              "    if (self->rlock_count == 0 || self->rlock_owner != tid) {\n"
+              "        FILE *log = fopen(\"/data/renpy/rlock-error.log\", \"w\");\n"
+              "        if (log) {\n"
+              "            fprintf(log, \"rlock mismatch: count=%lu owner=%lu current=%lu\\n\",\n"
+              "                    self->rlock_count, self->rlock_owner, tid);\n"
+              "            fclose(log);\n"
+              "        }\n"
+              "        PyErr_SetString(PyExc_RuntimeError,\n"
+              "                        \"cannot release un-acquired lock\");"
+          )
+          if thread_source.count(thread_include) != 1 or thread_source.count(thread_needle) != 1:
+              raise SystemExit("No pude identificar de forma unica el error de RLock esperado")
+          thread_source = thread_source.replace(thread_include, thread_include + "#include <stdio.h>\n", 1)
+          thread_path.write_text(thread_source.replace(thread_needle, thread_replacement, 1))
           PY
 
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
