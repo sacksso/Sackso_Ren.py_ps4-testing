@@ -115,10 +115,12 @@ jobs:
           [ -n "$s" ] && [ -d "$OO_PS4_TOOLCHAIN/samples/$s" ] || { echo "::error::Sample no encontrado ('$s'). Mira logs/samples.txt"; exit 1; }
           echo "Sample: $s" | tee logs/sample-elegido.txt
 
-          # Se compila en una copia para no tocar el toolchain. La carpeta debe llamarse igual que el sample:
-          # el Makefile usa el nombre de la carpeta actual (PROJDIR) para buscar los fuentes en <PROJDIR>/*.cpp.
-          work="$RUNNER_TEMP/$s"
-          rm -rf "$work"; cp -r "$OO_PS4_TOOLCHAIN/samples/$s" "$work"
+          # Se compila en una copia de TODA la carpeta samples para no tocar el toolchain y conservar la estructura:
+          # el Makefile usa el nombre de la carpeta actual (PROJDIR) para buscar los fuentes en <PROJDIR>/*.cpp
+          # y el codigo incluye ../../_common/*.h, asi que _common debe quedar al lado del sample.
+          copia="$RUNNER_TEMP/samples"
+          rm -rf "$copia"; cp -r "$OO_PS4_TOOLCHAIN/samples" "$copia"
+          work="$copia/$s"
           cd "$work"
           echo "== Makefile ==" > "$GITHUB_WORKSPACE/logs/makefile.txt"
           cat Makefile >> "$GITHUB_WORKSPACE/logs/makefile.txt" 2>&1 || echo "(sin Makefile)" >> "$GITHUB_WORKSPACE/logs/makefile.txt"
