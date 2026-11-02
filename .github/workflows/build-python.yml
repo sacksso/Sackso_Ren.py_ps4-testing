@@ -384,7 +384,8 @@ jobs:
 
       - name: Configurar módulos builtin
         run: |
-          cat > cpython/Modules/Setup.local <<'EOF'
+          mkdir -p build/Modules
+          cat > build/Modules/Setup.local <<'EOF'
           *static*
           _datetime _datetimemodule.c
           _json _json.c
@@ -398,8 +399,8 @@ jobs:
           select selectmodule.c
           unicodedata unicodedata.c
           EOF
-          sed -i 's/^          //' cpython/Modules/Setup.local
-          cp cpython/Modules/Setup.local logs-python/modules-setup.txt
+          sed -i 's/^          //' build/Modules/Setup.local
+          cp build/Modules/Setup.local logs-python/modules-setup.txt
 
       - name: Compilar libpython (solo la libreria estatica)
         run: |
