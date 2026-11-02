@@ -1,0 +1,176 @@
+name: Build PKG
+
+# PASO 1 del port de Ren'Py a PS4: comprobar que el toolchain OpenOrbis funciona en el CI (Linux)
+# y que sale un PKG del sample de SDL2 que trae el toolchain. Todavia no hay codigo propio.
+#
+# Primera ejecucion = reconocimiento: no conozco el nombre exacto del asset del release ni del sample SDL,
+# asi que el workflow los lista (logs/assets.txt, logs/samples.txt) y elige con una regla razonable.
+# Si algo falla, sube el artefacto 'logs' y pasamelo.
+#
+# INTERRUPTORES (Run workflow):
+#   toolchain_tag  Tag del release de OpenOrbis (latest = el ultimo). Sirve para fijar una version que ya funcione.
+#   sample         Carpeta de samples/ a compilar (auto = la primera cuyo nombre contenga 'sdl').
+#   recon_only     Solo descarga el toolchain y lista assets/samples; no compila.
+# Verificacion siempre activa: el SHA-256 del PKG contra su .sha256 (error si no coincide).
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain_tag:
+        description: 'Tag del release de OpenOrbis (latest = el ultimo)'
+        type: string
+        default: 'latest'
+      sample:
+        description: 'Carpeta de samples a compilar (auto = la primera con SDL en el nombre)'
+        type: string
+        default: 'auto'
+      recon_only:
+        description: 'Solo reconocimiento: listar assets y samples, sin compilar'
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-pkg
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  pkg:
+    name: Toolchain + PKG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Clonar el repo
+        uses: actions/checkout@v4
+
+      - name: Dependencias (clang, lld, make)
+        run: |
+          mkdir -p logs
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld make zip unzip
+          { clang --version | head -1; ld.lld --version | head -1; dotnet --version; } 2>&1 | tee logs/versions.txt
+
+      - name: Descargar el toolchain de OpenOrbis
+        env:
+          TAG: ${{ inputs.toolchain_tag }}
+        run: |
+          set -euo pipefail
+          repo=OpenOrbis/OpenOrbis-PS4-Toolchain
+          if [ "$TAG" = "latest" ]; then ep="repos/$repo/releases/latest"; else ep="repos/$repo/releases/tags/$TAG"; fi
+          gh api "$ep" > logs/release.json
+          tag=$(jq -r .tag_name logs/release.json)
+          echo "Release: $tag"
+          jq -r '.assets[] | "\(.name)\t\(.size)"' logs/release.json | tee logs/assets.txt
+
+          # Regla: primero un asset con 'linux' en el nombre; si no, cualquier zip/tar que no sea de Windows o macOS.
+          asset=$(jq -r '[.assets[].name | select(test("linux";"i")) | select(test("\\.(tar\\.gz|tgz|zip)$";"i"))][0] // empty' logs/release.json)
+          if [ -z "$asset" ]; then
+            asset=$(jq -r '[.assets[].name | select(test("\\.(tar\\.gz|tgz|zip)$";"i")) | select(test("windows|macos|win|mac|installer";"i") | not)][0] // empty' logs/release.json)
+          fi
+          [ -n "$asset" ] || { echo "::error::No encontre un asset de toolchain valido. Mira logs/assets.txt"; exit 1; }
+          echo "Asset elegido: $asset"
+
+          gh release download "$tag" --repo "$repo" --pattern "$asset" --dir dl
+          mkdir -p "$HOME/oo"
+          case "$asset" in
+            *.zip) unzip -q "dl/$asset" -d "$HOME/oo" ;;
+            *)     tar -xf "dl/$asset" -C "$HOME/oo" ;;
+          esac
+
+          bl=$(find "$HOME/oo" -type d -path '*/bin/linux' | head -1)
+          [ -n "$bl" ] || { echo "::error::No hay bin/linux dentro del asset. Estructura en logs/tree.txt"; find "$HOME/oo" -maxdepth 3 | head -80 > logs/tree.txt; exit 1; }
+          root=$(dirname "$(dirname "$bl")")
+          chmod +x "$root"/bin/linux/* || true
+          echo "OO_PS4_TOOLCHAIN=$root" >> "$GITHUB_ENV"
+          echo "$root/bin/linux" >> "$GITHUB_PATH"
+          echo "Toolchain en: $root"
+
+      - name: Reconocimiento (samples y herramientas)
+        run: |
+          {
+            echo "== OO_PS4_TOOLCHAIN =="; echo "$OO_PS4_TOOLCHAIN"
+            echo "== raiz =="; ls "$OO_PS4_TOOLCHAIN"
+            echo "== bin/linux =="; ls "$OO_PS4_TOOLCHAIN/bin/linux"
+            echo "== samples =="; ls "$OO_PS4_TOOLCHAIN/samples"
+            echo "== libs (lib/) =="; ls "$OO_PS4_TOOLCHAIN/lib" | head -60
+            echo "== SDL en el toolchain =="; find "$OO_PS4_TOOLCHAIN" -maxdepth 3 -iname '*sdl*' | head -40
+          } 2>&1 | tee logs/recon.txt
+          ls "$OO_PS4_TOOLCHAIN/samples" > logs/samples.txt
+
+      - name: Compilar el sample (EBOOT + PKG)
+        if: ${{ !inputs.recon_only }}
+        env:
+          SAMPLE: ${{ inputs.sample }}
+        run: |
+          set -euo pipefail
+          if [ "$SAMPLE" = "auto" ]; then
+            s=$(ls "$OO_PS4_TOOLCHAIN/samples" | grep -i sdl | head -1 || true)
+          else
+            s="$SAMPLE"
+          fi
+          [ -n "$s" ] && [ -d "$OO_PS4_TOOLCHAIN/samples/$s" ] || { echo "::error::Sample no encontrado ('$s'). Mira logs/samples.txt"; exit 1; }
+          echo "Sample: $s" | tee logs/sample-elegido.txt
+
+          # Se compila en una copia para no tocar el toolchain.
+          work="$RUNNER_TEMP/sample"
+          rm -rf "$work"; cp -r "$OO_PS4_TOOLCHAIN/samples/$s" "$work"
+          cd "$work"
+          echo "== Makefile ==" > "$GITHUB_WORKSPACE/logs/makefile.txt"
+          cat Makefile >> "$GITHUB_WORKSPACE/logs/makefile.txt" 2>&1 || echo "(sin Makefile)" >> "$GITHUB_WORKSPACE/logs/makefile.txt"
+          set +e
+          make 2>&1 | tee "$GITHUB_WORKSPACE/logs/build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          find . -name '*.pkg' -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
+          find . -iname 'eboot.bin' -exec cp {} "$GITHUB_WORKSPACE/dist/" \; || true
+          [ "$rc" -eq 0 ] || { echo "::error::make fallo ($rc). Mira logs/build.log"; exit "$rc"; }
+
+      - name: Verificar el PKG (hash)
+        if: ${{ !inputs.recon_only }}
+        run: |
+          set -euo pipefail
+          cd dist
+          pkg=$(ls *.pkg 2>/dev/null | head -1 || true)
+          [ -n "$pkg" ] || { echo "::error::No se genero ningun .pkg"; exit 1; }
+          sha256sum "$pkg" > "$pkg.sha256"
+          sha256sum -c "$pkg.sha256"
+          {
+            echo '### PKG'
+            echo '```'
+            ls -l --block-size=K *.pkg
+            cat "$pkg.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resumen (reconocimiento)
+        if: always()
+        run: |
+          {
+            echo '### Reconocimiento'
+            echo '```'
+            cat logs/assets.txt 2>/dev/null || true
+            echo '--- samples ---'
+            cat logs/samples.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: logs
+          if-no-files-found: ignore
+
+      - name: Subir PKG
+        if: ${{ !inputs.recon_only && success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: renpy-ps4-pkg
+          path: dist
+          if-no-files-found: error
