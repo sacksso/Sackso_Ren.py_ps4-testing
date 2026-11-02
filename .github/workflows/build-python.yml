@@ -325,7 +325,7 @@ jobs:
             --without-ensurepip --without-doc-strings \
             --prefix=/usr/local \
             CC=orbis-cc CPP="orbis-cc -E" AR=llvm-ar RANLIB=llvm-ranlib READELF=llvm-readelf \
-            CFLAGS="-O2" 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/configure.log"
+            CFLAGS="-O2 -DHAVE_BROKEN_POSIX_SEMAPHORES" 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/configure.log"
 
       - name: Compilar libpython (solo la libreria estatica)
         run: |
