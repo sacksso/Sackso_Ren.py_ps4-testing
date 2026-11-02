@@ -102,6 +102,7 @@ jobs:
         run: |
           python3.12 - <<'PY'
           from pathlib import Path
+          import subprocess
 
           source_path = Path("cpython/Modules/getpath.c")
           source = source_path.read_text()
@@ -278,6 +279,14 @@ jobs:
               raise SystemExit("No pude identificar de forma unica el codec lookup de filesystem")
           unicode_source = unicode_source.replace(unicode_include, unicode_include + "#include <stdio.h>\n", 1)
           unicode_path.write_text(unicode_source.replace(unicode_needle, unicode_replacement, 1))
+
+          freeze_path = Path("cpython/Tools/build/freeze_modules.py")
+          freeze_source = freeze_path.read_text()
+          freeze_entry = "        #'<encodings.*>',\n"
+          if freeze_source.count(freeze_entry) != 1:
+              raise SystemExit("No pude encontrar de forma unica la entrada encodings de freeze_modules.py")
+          freeze_path.write_text(freeze_source.replace(freeze_entry, "        '<encodings.*>',\n", 1))
+          subprocess.run(["python3.12", str(freeze_path), "--frozen-modules"], check=True)
           PY
 
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
