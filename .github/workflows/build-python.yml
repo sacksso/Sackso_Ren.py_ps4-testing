@@ -391,10 +391,9 @@ jobs:
           _json _json.c
           _pickle _pickle.c
           _random _randommodule.c
-          _socket socketmodule.c
           _struct _struct.c
           array arraymodule.c
-          binascii binascii.c
+          binascii binascii.c -UUSE_ZLIB_CRC32
           math mathmodule.c
           select selectmodule.c
           unicodedata unicodedata.c
