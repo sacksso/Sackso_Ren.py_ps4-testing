@@ -3,7 +3,6 @@
 #include <cstdarg>
 #include <cstdio>
 #include <sys/stat.h>
-#include <unistd.h>
 
 static FILE* g_log = nullptr;
 
@@ -23,11 +22,8 @@ static void log_message(const char* format, ...) {
 
 int main() {
     mkdir("/data/renpy", 0777);
-    g_log = fopen("/data/renpy/python-smoke.log", "w");
-    if (!g_log) g_log = fopen("/data/renpy_python_smoke.log", "w");
-    if (g_log && dup2(fileno(g_log), STDERR_FILENO) < 0) {
-        log_message("No se pudo redirigir stderr al log");
-    }
+    g_log = freopen("/data/renpy/python-smoke.log", "w", stderr);
+    if (!g_log) g_log = freopen("/data/renpy_python_smoke.log", "w", stderr);
 
     log_message("== CPython PS4 smoke test ==");
 
