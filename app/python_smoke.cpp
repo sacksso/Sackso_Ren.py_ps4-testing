@@ -30,6 +30,8 @@ int main() {
     PyConfig config;
     PyConfig_InitIsolatedConfig(&config);
     config.module_search_paths_set = 1;
+    config.use_hash_seed = 1;
+    config.hash_seed = 0;
 
     PyStatus status = PyWideStringList_Append(
         &config.module_search_paths, L"/app0/assets/stdlib.zip");
