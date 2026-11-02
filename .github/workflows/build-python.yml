@@ -1,0 +1,177 @@
+name: Build Python (PS4)
+
+# PASO 3: cross-compilar CPython como libreria ESTATICA (libpython3.x.a) con el toolchain OpenOrbis.
+# Es un intento de RECONOCIMIENTO: es muy probable que la primera vez falten funciones de libc o que
+# configure proteste. Por eso siempre sube el artefacto 'logs-python' (configure.log, make.log y
+# missing.txt = lista de funciones que configure NO encontro en la libc de la PS4). Pasamelos y iteramos.
+#
+# Colocar en: .github/workflows/build-python.yml
+#
+# INTERRUPTORES:
+#   toolchain_tag   Tag del release de OpenOrbis (latest = el ultimo).
+#   python_version  Version exacta de CPython (debe existir en python.org). Ren'Py 8.x usa Python 3.12.
+#   jobs            Hilos de make.
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain_tag:
+        description: 'Tag del release de OpenOrbis (latest = el ultimo)'
+        type: string
+        default: 'latest'
+      python_version:
+        description: 'Version de CPython (ej. 3.12.10)'
+        type: string
+        default: '3.12.10'
+      jobs:
+        description: 'Hilos de make'
+        type: string
+        default: '4'
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  python:
+    name: CPython estatico para PS4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Clonar el repo
+        uses: actions/checkout@v4
+
+      - name: Dependencias
+        run: |
+          mkdir -p logs-python
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm make zip unzip python3.12 pkg-config
+          { clang --version | head -1; llvm-ar --version | head -1; python3.12 --version; } 2>&1 | tee logs-python/versions.txt
+
+      - name: Descargar el toolchain de OpenOrbis
+        env:
+          TAG: ${{ inputs.toolchain_tag }}
+        run: |
+          set -euo pipefail
+          repo=OpenOrbis/OpenOrbis-PS4-Toolchain
+          if [ "$TAG" = "latest" ]; then ep="repos/$repo/releases/latest"; else ep="repos/$repo/releases/tags/$TAG"; fi
+          gh api "$ep" > release.json
+          tag=$(jq -r .tag_name release.json)
+          asset=$(jq -r '[.assets[].name | select(test("linux";"i")) | select(test("\\.(tar\\.gz|tgz|zip)$";"i"))][0] // empty' release.json)
+          if [ -z "$asset" ]; then
+            asset=$(jq -r '[.assets[].name | select(test("\\.(tar\\.gz|tgz|zip)$";"i")) | select(test("windows|macos|win|mac|installer";"i") | not)][0] // empty' release.json)
+          fi
+          [ -n "$asset" ] || { echo "::error::No encontre asset de toolchain"; exit 1; }
+          echo "Release $tag, asset $asset"
+          gh release download "$tag" --repo "$repo" --pattern "$asset" --dir dl
+          mkdir -p "$HOME/oo"
+          case "$asset" in
+            *.zip) unzip -q "dl/$asset" -d "$HOME/oo" ;;
+            *)     tar -xf "dl/$asset" -C "$HOME/oo" ;;
+          esac
+          bl=$(find "$HOME/oo" -type d -path '*/bin/linux' | head -1)
+          root=$(dirname "$(dirname "$bl")")
+          echo "OO_PS4_TOOLCHAIN=$root" >> "$GITHUB_ENV"
+          echo "Toolchain en: $root"
+
+      - name: Descargar CPython
+        env:
+          PYV: ${{ inputs.python_version }}
+        run: |
+          set -euo pipefail
+          wget -q "https://www.python.org/ftp/python/${PYV}/Python-${PYV}.tgz" -O py.tgz
+          tar -xf py.tgz
+          mv "Python-${PYV}" cpython
+          ls cpython | head -20
+
+      # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
+      # Con -c/-E/-S solo compila; en cualquier otro caso anade el script de enlace y crt1.o de OpenOrbis.
+      - name: Crear compilador envoltorio (orbis-cc)
+        run: |
+          mkdir -p "$HOME/bin"
+          cat > "$HOME/bin/orbis-cc" <<'EOF'
+          #!/bin/bash
+          OO="$OO_PS4_TOOLCHAIN"
+          base=(clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -isysroot "$OO" -isystem "$OO/include")
+          only_compile=0
+          for a in "$@"; do
+            case "$a" in
+              -c|-E|-S|-M|-MM|-v|-V|--version|-qversion|-print-*|-dumpmachine|-dumpversion) only_compile=1 ;;
+            esac
+          done
+          if [ "$only_compile" = 1 ]; then exec "${base[@]}" "$@"; fi
+          exec "${base[@]}" -fuse-ld=lld -nostdlib -Wl,-m,elf_x86_64 -Wl,-pie -Wl,--script,"$OO/link.x" \
+            -Wl,--eh-frame-hdr -L"$OO/lib" "$@" -lc -lkernel "$OO/lib/crt1.o"
+          EOF
+          sed -i 's/^          //' "$HOME/bin/orbis-cc"
+          chmod +x "$HOME/bin/orbis-cc"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      # Valores que configure no puede averiguar al cross-compilar (no puede ejecutar nada de la PS4).
+      - name: config.site
+        run: |
+          cat > "$HOME/config.site" <<'EOF'
+          ac_cv_file__dev_ptmx=no
+          ac_cv_file__dev_ptc=no
+          ac_cv_buggy_getaddrinfo=no
+          ac_cv_func_dlopen=no
+          ac_cv_lib_dl_dlopen=no
+          ac_cv_have_long_long_format=yes
+          ac_cv_working_tzset=yes
+          EOF
+          sed -i 's/^          //' "$HOME/config.site"
+
+      # TRUCO: el configure de CPython rechaza hosts desconocidos al cross-compilar (error "cross build not supported").
+      # Se declara un host con triple Linux distinto del build para forzar modo cross. Es un apaño: el reconocimiento
+      # dira si algun supuesto de Linux estorba. El compilador real sigue apuntando a freebsd12-elf (orbis-cc).
+      - name: configure
+        run: |
+          set -o pipefail
+          mkdir -p build && cd build
+          export CONFIG_SITE="$HOME/config.site"
+          ../cpython/configure \
+            --build=x86_64-build-linux-gnu \
+            --host=x86_64-pc-linux-gnu \
+            --with-build-python="$(command -v python3.12)" \
+            --disable-shared --disable-ipv6 --disable-test-modules \
+            --without-ensurepip --without-doc-strings \
+            --prefix=/usr/local \
+            CC=orbis-cc CPP="orbis-cc -E" AR=llvm-ar RANLIB=llvm-ranlib READELF=llvm-readelf \
+            CFLAGS="-O2" 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/configure.log"
+
+      - name: Compilar libpython (solo la libreria estatica)
+        run: |
+          cd build
+          set +e
+          make -j"${{ inputs.jobs }}" libpython3.12.a 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/make.log"
+          echo "make rc=${PIPESTATUS[0]}" | tee -a "$GITHUB_WORKSPACE/logs-python/make.log"
+          mkdir -p "$GITHUB_WORKSPACE/dist-python"
+          cp libpython3*.a "$GITHUB_WORKSPACE/dist-python/" 2>/dev/null || true
+          [ -f libpython3.12.a ] || { echo "::error::No se genero libpython3.12.a. Mira logs-python/make.log"; exit 1; }
+
+      - name: Resumen de lo que falta en la libc
+        if: always()
+        run: |
+          cp build/config.log logs-python/config.log 2>/dev/null || true
+          grep -E '\.\.\. no$' logs-python/configure.log > logs-python/missing.txt 2>/dev/null || true
+          grep -E 'error:|undefined (symbol|reference)' logs-python/make.log | sort | uniq -c | sort -rn | head -60 > logs-python/errores-make.txt 2>/dev/null || true
+          {
+            echo '### CPython PS4'
+            echo "Funciones/cabeceras no encontradas: $(wc -l < logs-python/missing.txt 2>/dev/null || echo 0)"
+            ls -l dist-python 2>/dev/null || echo "(sin libpython)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-python
+          path: logs-python
+          if-no-files-found: ignore
+
+      - name: Subir libpython
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-ps4
+          path: dist-python
+          if-no-files-found: error
