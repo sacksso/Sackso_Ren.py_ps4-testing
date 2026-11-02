@@ -233,6 +233,51 @@ jobs:
           if thread_source.count(thread_save_needle) != 1:
               raise SystemExit("No pude identificar de forma unica el error de RLock release_save esperado")
           thread_path.write_text(thread_source.replace(thread_save_needle, thread_save_replacement, 1))
+
+          unicode_path = Path("cpython/Objects/unicodeobject.c")
+          unicode_source = unicode_path.read_text()
+          unicode_include = '#include "Python.h"\n'
+          unicode_needle = (
+              "    PyObject *codec = _PyCodec_Lookup(encoding);\n"
+              "    PyMem_RawFree(encoding);\n\n"
+              "    if (!codec)\n"
+              "        goto error;"
+          )
+          unicode_replacement = (
+              "    PyObject *codec = _PyCodec_Lookup(encoding);\n"
+              "    if (!codec) {\n"
+              "        PyObject *type = NULL;\n"
+              "        PyObject *value = NULL;\n"
+              "        PyObject *traceback = NULL;\n"
+              "        PyErr_Fetch(&type, &value, &traceback);\n"
+              "        PyObject *type_name = type ? PyObject_GetAttrString(type, \"__name__\") : NULL;\n"
+              "        PyObject *message = value ? PyObject_Str(value) : NULL;\n"
+              "        PyObject *paths = PySys_GetObject(\"path\");\n"
+              "        PyObject *paths_repr = paths ? PyObject_Repr(paths) : NULL;\n"
+              "        const char *type_text = type_name ? PyUnicode_AsUTF8(type_name) : NULL;\n"
+              "        const char *message_text = message ? PyUnicode_AsUTF8(message) : NULL;\n"
+              "        const char *paths_text = paths_repr ? PyUnicode_AsUTF8(paths_repr) : NULL;\n"
+              "        FILE *log = fopen(\"/data/renpy/fs-codec-error.log\", \"w\");\n"
+              "        if (log) {\n"
+              "            fprintf(log, \"encoding=%s exception=%s: %s\\n\", encoding,\n"
+              "                    type_text ? type_text : \"unknown\",\n"
+              "                    message_text ? message_text : \"no exception text\");\n"
+              "            fprintf(log, \"sys.path=%s\\n\", paths_text ? paths_text : \"unavailable\");\n"
+              "            fclose(log);\n"
+              "        }\n"
+              "        Py_XDECREF(paths_repr);\n"
+              "        Py_XDECREF(message);\n"
+              "        Py_XDECREF(type_name);\n"
+              "        PyErr_Restore(type, value, traceback);\n"
+              "        PyMem_RawFree(encoding);\n"
+              "        goto error;\n"
+              "    }\n"
+              "    PyMem_RawFree(encoding);"
+          )
+          if unicode_source.count(unicode_include) != 1 or unicode_source.count(unicode_needle) != 1:
+              raise SystemExit("No pude identificar de forma unica el codec lookup de filesystem")
+          unicode_source = unicode_source.replace(unicode_include, unicode_include + "#include <stdio.h>\n", 1)
+          unicode_path.write_text(unicode_source.replace(unicode_needle, unicode_replacement, 1))
           PY
 
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
