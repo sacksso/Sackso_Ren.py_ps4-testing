@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "keyboard.h"  // copiado por el workflow desde samples/keyboard/keyboard/
+#include "mouse.h"     // raton nativo (libSceMouse), ver app/mouse.cpp
 
 #include <cmath>
 #include <cstdarg>
@@ -43,6 +44,10 @@ static void logf_(const char* fmt, ...) {
         fprintf(g_log, "%s\n", buf);
         fflush(g_log);
     }
+}
+
+static void mouseLog(const char* line) {
+    logf_("%s", line);
 }
 
 static void openLog() {
@@ -147,6 +152,11 @@ int main(int argc, char* argv[]) {
     const bool kbOk = kb->Init(-1);
     logf_("Keyboard::Init(-1) = %s", kbOk ? "ok" : "FALLO");
     std::vector<uint16_t> prevKeys;
+
+    // Raton nativo (libSceMouse).
+    const bool mouseOk = psmouse_init(mouseLog);
+    logf_("psmouse_init = %s", mouseOk ? "ok" : "FALLO");
+    uint32_t prevMouseButtons = 0;
 
     // Audio.
     Tone tone;
@@ -267,6 +277,48 @@ int main(int argc, char* argv[]) {
                 }
             }
             prevKeys.swap(cur);
+        }
+
+        // Raton nativo: se convierte en eventos SDL para que el resto (y luego pygame_sdl2) lo vea como un raton normal.
+        if (mouseOk) {
+            PsMouseState ms;
+            if (psmouse_poll(&ms)) {
+                if (ms.dx || ms.dy) {
+                    mx = std::max(0, std::min(1919, mx + ms.dx));
+                    my = std::max(0, std::min(1079, my + ms.dy));
+                    SDL_Event ev;
+                    SDL_zero(ev);
+                    ev.type = SDL_MOUSEMOTION;
+                    ev.motion.x = mx;
+                    ev.motion.y = my;
+                    ev.motion.xrel = ms.dx;
+                    ev.motion.yrel = ms.dy;
+                    SDL_PushEvent(&ev);
+                }
+                const struct { uint32_t bit; Uint8 sdl; } map[] = {
+                    {1, SDL_BUTTON_LEFT}, {2, SDL_BUTTON_RIGHT}, {4, SDL_BUTTON_MIDDLE}};
+                for (const auto& m : map) {
+                    if ((ms.buttons ^ prevMouseButtons) & m.bit) {
+                        const bool down = (ms.buttons & m.bit) != 0;
+                        SDL_Event ev;
+                        SDL_zero(ev);
+                        ev.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+                        ev.button.button = m.sdl;
+                        ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
+                        ev.button.x = mx;
+                        ev.button.y = my;
+                        SDL_PushEvent(&ev);
+                    }
+                }
+                prevMouseButtons = ms.buttons;
+                if (ms.wheel) {
+                    SDL_Event ev;
+                    SDL_zero(ev);
+                    ev.type = SDL_MOUSEWHEEL;
+                    ev.wheel.y = ms.wheel;
+                    SDL_PushEvent(&ev);
+                }
+            }
         }
 
         if (now - lastBeat >= 5000) {
