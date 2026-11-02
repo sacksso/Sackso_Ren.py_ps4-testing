@@ -91,7 +91,7 @@ jobs:
           cat > "$HOME/bin/orbis-cc" <<'EOF'
           #!/bin/bash
           OO="$OO_PS4_TOOLCHAIN"
-          base=(clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -isysroot "$OO" -isystem "$OO/include")
+          base=(clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -fshort-wchar -isysroot "$OO" -isystem "$HOME/stubs" -isystem "$OO/include")
           only_compile=0
           for a in "$@"; do
             case "$a" in
@@ -105,6 +105,14 @@ jobs:
           sed -i 's/^          //' "$HOME/bin/orbis-cc"
           chmod +x "$HOME/bin/orbis-cc"
           echo "$HOME/bin" >> "$GITHUB_PATH"
+          # CPython cree que es FreeBSD (__FreeBSD__) y pide pthread_np.h, que OpenOrbis no trae.
+          mkdir -p "$HOME/stubs"
+          cat > "$HOME/stubs/pthread_np.h" <<'EOF'
+          #pragma once
+          #include <pthread.h>
+          #include <stdint.h>
+          static inline int pthread_getthreadid_np(void) { return (int)(intptr_t)pthread_self(); }
+          EOF
 
       # Valores que configure no puede averiguar al cross-compilar (no puede ejecutar nada de la PS4).
       - name: config.site
@@ -117,6 +125,8 @@ jobs:
           ac_cv_lib_dl_dlopen=no
           ac_cv_have_long_long_format=yes
           ac_cv_working_tzset=yes
+          ac_cv_pthread_is_default=yes
+          ac_cv_computed_gotos=yes
           EOF
           sed -i 's/^          //' "$HOME/config.site"
 
@@ -142,7 +152,7 @@ jobs:
         run: |
           cd build
           set +e
-          make -j"${{ inputs.jobs }}" libpython3.12.a 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/make.log"
+          make -k -j"${{ inputs.jobs }}" libpython3.12.a 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/make.log"
           echo "make rc=${PIPESTATUS[0]}" | tee -a "$GITHUB_WORKSPACE/logs-python/make.log"
           mkdir -p "$GITHUB_WORKSPACE/dist-python"
           cp libpython3*.a "$GITHUB_WORKSPACE/dist-python/" 2>/dev/null || true
