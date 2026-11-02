@@ -2,6 +2,8 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cerrno>
+#include <cstring>
 #include <sys/stat.h>
 
 static FILE* g_log = nullptr;
@@ -61,6 +63,18 @@ int main() {
     if (!g_log) g_log = fopen("/data/renpy_python_smoke.log", "w");
 
     log_message("== CPython PS4 smoke test ==");
+    FILE* stdlib = fopen("/app0/assets/stdlib.zip", "rb");
+    if (!stdlib) {
+        log_message("STDLIB_OPEN_FAIL errno=%d (%s)", errno, strerror(errno));
+    } else {
+        unsigned char signature[4] = {};
+        const size_t signature_size = fread(signature, 1, sizeof(signature), stdlib);
+        fseek(stdlib, 0, SEEK_END);
+        const long stdlib_size = ftell(stdlib);
+        log_message("STDLIB_OPEN_OK size=%ld signature=%02x%02x%02x%02x bytes=%zu",
+                    stdlib_size, signature[0], signature[1], signature[2], signature[3], signature_size);
+        fclose(stdlib);
+    }
 
     PyConfig config;
     PyConfig_InitIsolatedConfig(&config);
