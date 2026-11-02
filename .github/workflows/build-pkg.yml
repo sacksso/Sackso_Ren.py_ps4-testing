@@ -54,6 +54,23 @@ jobs:
           sudo apt-get install -y -qq clang lld make zip unzip
           { clang --version | head -1; ld.lld --version | head -1; dotnet --version; } 2>&1 | tee logs/versions.txt
 
+      # PkgTool.Core (crea el PKG) pide OpenSSL 1.1 y Ubuntu 24.04 solo trae la 3: sin esto aborta con
+      # "No usable version of libssl was found". Se instala libssl1.1 de Ubuntu 20.04 junto a la 3.
+      - name: Instalar libssl1.1 (para PkgTool.Core)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          ok=0
+          for u in \
+            "http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb" \
+            "http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb"; do
+            if wget -q "$u" -O libssl1.1.deb; then ok=1; echo "Descargado: $u"; break; fi
+          done
+          [ "$ok" = 1 ] || { echo "::error::No pude descargar libssl1.1"; exit 1; }
+          sudo dpkg -i libssl1.1.deb
+          ldconfig -p | grep -E 'libssl\.so' | tee "$GITHUB_WORKSPACE/logs/libssl.txt"
+          echo "CLR_OPENSSL_VERSION_OVERRIDE=1.1" >> "$GITHUB_ENV"
+
       - name: Descargar el toolchain de OpenOrbis
         env:
           TAG: ${{ inputs.toolchain_tag }}
