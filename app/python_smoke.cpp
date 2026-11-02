@@ -169,6 +169,12 @@ int main() {
     probe_expression("python open seek",
                      "(lambda f: (f.seek(0, 2), f.close()))(open('/app0/assets/stdlib.zip', 'rb'))",
                      globals);
+    probe_expression("python os.open readonly",
+                     "(lambda os: (lambda fd: (os.close(fd), fd)[1])(os.open('/app0/assets/stdlib.zip', os.O_RDONLY)))(__import__('os'))",
+                     globals);
+    probe_expression("python os.open cloexec",
+                     "(lambda os: (lambda fd: (os.close(fd), fd)[1])(os.open('/app0/assets/stdlib.zip', os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0))))(__import__('os'))",
+                     globals);
     PyObject* zip_spec = PyRun_String(
         "__import__('zipimport').zipimporter('/app0/assets/stdlib.zip').find_spec('json')",
         Py_eval_input, globals, globals);
