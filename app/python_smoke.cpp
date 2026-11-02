@@ -139,6 +139,29 @@ int main() {
     log_object_repr("sys.path", PySys_GetObject("path"));
     log_object_repr("sys.path_hooks", PySys_GetObject("path_hooks"));
     probe_module("zipimport");
+    PyObject* file_probe = PyRun_String(
+        "(__import__('os').stat('/app0/assets/stdlib.zip').st_size, "
+        "(lambda f: (f.read(4), f.seek(0, 2), f.tell(), f.close())) "
+        "(open('/app0/assets/stdlib.zip', 'rb'))) ",
+        Py_eval_input, globals, globals);
+    if (file_probe) {
+        log_object_repr("python stdlib file probe", file_probe);
+        Py_DECREF(file_probe);
+    } else {
+        PyObject* type = nullptr;
+        PyObject* value = nullptr;
+        PyObject* traceback = nullptr;
+        PyErr_Fetch(&type, &value, &traceback);
+        PyObject* message = value ? PyObject_Str(value) : nullptr;
+        const char* message_text = message ? PyUnicode_AsUTF8(message) : nullptr;
+        log_message("python stdlib file probe failed: %s",
+                    message_text ? message_text : "sin detalle");
+        Py_XDECREF(message);
+        Py_XDECREF(type);
+        Py_XDECREF(value);
+        Py_XDECREF(traceback);
+        PyErr_Clear();
+    }
     PyObject* zip_spec = PyRun_String(
         "__import__('zipimport').zipimporter('/app0/assets/stdlib.zip').find_spec('json')",
         Py_eval_input, globals, globals);
