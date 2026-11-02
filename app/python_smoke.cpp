@@ -20,6 +20,29 @@ static void log_message(const char* format, ...) {
     }
 }
 
+static void probe_module(const char* name) {
+    PyObject* module = PyImport_ImportModule(name);
+    if (module) {
+        log_message("MODULE_OK %s", name);
+        Py_DECREF(module);
+        return;
+    }
+
+    PyObject* type = nullptr;
+    PyObject* value = nullptr;
+    PyObject* traceback = nullptr;
+    PyErr_Fetch(&type, &value, &traceback);
+    PyObject* message = value ? PyObject_Str(value) : nullptr;
+    const char* message_text = message ? PyUnicode_AsUTF8(message) : nullptr;
+    log_message("MODULE_FAIL %s: %s", name,
+                message_text ? message_text : "sin detalle");
+    Py_XDECREF(message);
+    Py_XDECREF(type);
+    Py_XDECREF(value);
+    Py_XDECREF(traceback);
+    PyErr_Clear();
+}
+
 int main() {
     mkdir("/data/renpy", 0777);
     std::remove("/data/renpy/getpath-error.log");
@@ -88,9 +111,17 @@ int main() {
     }
 
     log_message("Python version: %s", version_text);
-    log_message("PYTHON_SMOKE_OK result=42");
     Py_DECREF(answer);
     Py_DECREF(version);
+
+    static const char* const modules[] = {
+        "os", "json", "math", "_struct", "binascii", "zlib", "select",
+        "_socket", "_random", "_datetime", "_json", "array", "unicodedata",
+        "_pickle", "_hashlib", "_md5", "_sha1", "_sha2", "hashlib",
+    };
+    for (const char* module : modules) probe_module(module);
+
+    log_message("PYTHON_SMOKE_OK result=42");
     const int finalize_status = Py_FinalizeEx();
     log_message("Py_FinalizeEx = %d", finalize_status);
     if (g_log) fclose(g_log);
