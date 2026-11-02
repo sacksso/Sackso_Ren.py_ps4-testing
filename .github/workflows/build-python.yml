@@ -98,6 +98,42 @@ jobs:
           mv "Python-${PYV}" cpython
           ls cpython | head -20
 
+          - name: Instrumentar error de getpath
+          run: |
+            python3.12 - <<'PY'
+            from pathlib import Path
+
+            source_path = Path("cpython/Modules/getpath.c")
+            source = source_path.read_text()
+            include = "#include <wchar.h>\n"
+              needle = '        _PyErr_WriteUnraisableMsg("error evaluating path", NULL);'
+              replacement = (
+                "        PyObject *type = NULL;\n"
+                "        PyObject *value = NULL;\n"
+                "        PyObject *traceback = NULL;\n"
+                "        PyErr_Fetch(&type, &value, &traceback);\n"
+                "        PyObject *type_name = type ? PyObject_GetAttrString(type, \"__name__\") : NULL;\n"
+                "        PyObject *message = value ? PyObject_Str(value) : NULL;\n"
+                "        const char *type_text = type_name ? PyUnicode_AsUTF8(type_name) : NULL;\n"
+                "        const char *message_text = message ? PyUnicode_AsUTF8(message) : NULL;\n"
+                "        FILE *log = fopen(\"/data/renpy/getpath-error.log\", \"w\");\n"
+                "        if (log) {\n"
+                "            fprintf(log, \"getpath exception: %s: %s\\n\",\n"
+                "                    type_text ? type_text : \"unknown\",\n"
+                "                    message_text ? message_text : \"no exception text\");\n"
+                "            fclose(log);\n"
+                "        }\n"
+                "        Py_XDECREF(type_name);\n"
+                "        Py_XDECREF(message);\n"
+                "        PyErr_Restore(type, value, traceback);\n"
+                + needle + "\n"
+              )
+              if source.count(include) != 1 or source.count(needle) != 1:
+                raise SystemExit("No pude identificar de forma unica el punto de error de getpath.c")
+              source = source.replace(include, include + "#include <stdio.h>\n", 1)
+              source_path.write_text(source.replace(needle, replacement, 1))
+            PY
+
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
       # Con -c/-E/-S solo compila; en cualquier otro caso anade el script de enlace y crt1.o de OpenOrbis.
       - name: Crear compilador envoltorio (orbis-cc)
