@@ -154,8 +154,9 @@ int main(int argc, char* argv[]) {
     std::vector<uint16_t> prevKeys;
 
     // Raton nativo (libSceMouse).
-    const bool mouseOk = psmouse_init(mouseLog);
-    logf_("psmouse_init = %s", mouseOk ? "ok" : "FALLO");
+    // Se inicializa tras ~60 frames para que la pantalla de test y el audio arranquen aunque el raton falle.
+    bool mouseTried = false;
+    bool mouseOk = false;
     uint32_t prevMouseButtons = 0;
 
     // Audio.
@@ -277,6 +278,13 @@ int main(int argc, char* argv[]) {
                 }
             }
             prevKeys.swap(cur);
+        }
+
+        if (!mouseTried && frames >= 60) {
+            mouseTried = true;
+            logf_("== iniciando raton (frame %lu) ==", frames);
+            mouseOk = psmouse_init(mouseLog);
+            logf_("psmouse_init = %s", mouseOk ? "ok" : "FALLO");
         }
 
         // Raton nativo: se convierte en eventos SDL para que el resto (y luego pygame_sdl2) lo vea como un raton normal.

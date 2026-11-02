@@ -2,16 +2,25 @@
 // SceMouseData vienen de memoria, no de los logs; por eso se vuelca el contenido crudo al log.
 #include "mouse.h"
 
+#include <orbis/Sysmodule.h>
+
+#include <cstddef>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
+// No se enlaza -lSceMouse: las funciones se resuelven en runtime tras cargar el sysmodule (ver psmouse_init).
 extern "C" {
 int sceUserServiceGetInitialUser(int* userId);
-int sceMouseInit(void);
-int sceMouseOpen(int userId, int type, int index, void* param);
-int sceMouseRead(int handle, void* data, int num);
+int sceKernelLoadStartModule(const char* path, size_t argc, const void* argv, unsigned flags, void* opt, int* res);
+int sceKernelDlsym(int handle, const char* name, void** addr);
 }
+typedef int (*FnMouseInit)(void);
+typedef int (*FnMouseOpen)(int, int, int, void*);
+typedef int (*FnMouseRead)(int, void*, int);
+static FnMouseInit sceMouseInit = nullptr;
+static FnMouseOpen sceMouseOpen = nullptr;
+static FnMouseRead sceMouseRead = nullptr;
 
 // Layout esperado de SceMouseData (40 bytes).
 struct RawMouse {
@@ -52,6 +61,33 @@ static void dumpRaw(const uint8_t* b, int n) {
 
 bool psmouse_init(PsMouseLogFn logger) {
     g_log = logger;
+
+    int src = sceSysmoduleLoadModule(ORBIS_SYSMODULE_MOUSE);  // 0x00A9 = libSceMouse.sprx
+    L("sceSysmoduleLoadModule(MOUSE) = 0x%x", static_cast<unsigned>(src));
+
+    const char* paths[] = {"/system/common/lib/libSceMouse.sprx", "libSceMouse.sprx"};
+    int mod = -1;
+    for (const char* path : paths) {
+        mod = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, nullptr);
+        L("sceKernelLoadStartModule(%s) = 0x%x", path, static_cast<unsigned>(mod));
+        if (mod > 0) break;
+    }
+    if (mod <= 0) return false;
+
+    void* a = nullptr;
+    int d1 = sceKernelDlsym(mod, "sceMouseInit", &a);
+    sceMouseInit = reinterpret_cast<FnMouseInit>(a);
+    a = nullptr;
+    int d2 = sceKernelDlsym(mod, "sceMouseOpen", &a);
+    sceMouseOpen = reinterpret_cast<FnMouseOpen>(a);
+    a = nullptr;
+    int d3 = sceKernelDlsym(mod, "sceMouseRead", &a);
+    sceMouseRead = reinterpret_cast<FnMouseRead>(a);
+    L("dlsym: init=0x%x open=0x%x read=0x%x", static_cast<unsigned>(d1), static_cast<unsigned>(d2),
+      static_cast<unsigned>(d3));
+    if (!sceMouseInit || !sceMouseOpen || !sceMouseRead) return false;
+
+    L("llamando sceMouseInit...");
     int rc = sceMouseInit();
     L("sceMouseInit = 0x%x", static_cast<unsigned>(rc));
 
@@ -61,6 +97,7 @@ bool psmouse_init(PsMouseLogFn logger) {
 
     const int users[] = {initial, 0xFE, -1, 0};  // 0xFE = usuario "system" en el SDK de Sony
     for (int u : users) {
+        L("llamando sceMouseOpen(user=%d)...", u);
         int h = sceMouseOpen(u, 0, 0, nullptr);  // type 0 = puerto estandar, index 0
         L("sceMouseOpen(user=%d, type=0, index=0) = 0x%x", u, static_cast<unsigned>(h));
         if (h >= 0) {
