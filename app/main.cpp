@@ -6,8 +6,17 @@
 //    Un cuarto cuadrado parpadea al ritmo del pitido de audio.
 //  - Audio: pitido de 440 Hz durante 0,5 s cada 2 s, por SDL_OpenAudioDevice.
 //  - Cada 5 s escribe un latido con contadores de eventos.
+//  - Teclado: SDL (2.0.9 de la PS4) solo ve el mando, asi que el teclado se lee con la API nativa (libSceKeyboard)
+//    reutilizando la clase Keyboard del sample 'keyboard' de OpenOrbis (el workflow copia keyboard.h/.cpp).
+//    Esto es temporal: despues se convertira en eventos de SDL para pygame_sdl2.
 
 #include <SDL2/SDL.h>
+
+#include <algorithm>
+#include <sstream>
+#include <vector>
+
+#include "keyboard.h"  // copiado por el workflow desde samples/keyboard/keyboard/
 
 #include <cmath>
 #include <cstdarg>
@@ -16,6 +25,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
+
+// Lo piden los .h/.cpp de los samples de OpenOrbis (log.h): ellos lo declaran y el programa lo define.
+std::stringstream debugLogStream;
 
 static FILE* g_log = nullptr;
 
@@ -130,6 +142,12 @@ int main(int argc, char* argv[]) {
         if (!joy) joy = j;
     }
 
+    // Teclado nativo (libSceKeyboard).
+    Keyboard* kb = new Keyboard();
+    const bool kbOk = kb->Init(-1);
+    logf_("Keyboard::Init(-1) = %s", kbOk ? "ok" : "FALLO");
+    std::vector<uint16_t> prevKeys;
+
     // Audio.
     Tone tone;
     std::memset(&tone, 0, sizeof(tone));
@@ -229,6 +247,28 @@ int main(int argc, char* argv[]) {
         }
 
         const Uint32 now = SDL_GetTicks();
+
+        // Teclado nativo: se compara el conjunto de teclas pulsadas con el del frame anterior.
+        if (kbOk) {
+            std::vector<uint16_t> cur;
+            for (uint16_t k : kb->Keys()) cur.push_back(k);
+            for (uint16_t k : cur) {
+                if (std::find(prevKeys.begin(), prevKeys.end(), k) == prevKeys.end()) {
+                    cKb++;
+                    lastKb = now;
+                    logf_("tecla nativa abajo: codigo=%u char=%d", static_cast<unsigned>(k), kb->Key2Char(k));
+                }
+            }
+            for (uint16_t k : prevKeys) {
+                if (std::find(cur.begin(), cur.end(), k) == cur.end()) {
+                    cKb++;
+                    lastKb = now;
+                    logf_("tecla nativa arriba: codigo=%u", static_cast<unsigned>(k));
+                }
+            }
+            prevKeys.swap(cur);
+        }
+
         if (now - lastBeat >= 5000) {
             lastBeat = now;
             logf_("latido: frames=%lu teclado=%lu raton=%lu mando=%lu otros=%lu", frames, cKb, cMouse, cPad, cOther);
