@@ -132,6 +132,35 @@ jobs:
               raise SystemExit("No pude identificar de forma unica el punto de error de getpath.c")
           source = source.replace(include, include + "#include <stdio.h>\n", 1)
           source_path.write_text(source.replace(needle, replacement, 1))
+
+          import_path = Path("cpython/Python/import.c")
+          import_source = import_path.read_text()
+          import_include = "#include <stdbool.h>              // bool\n"
+          import_needle = '        _PyErr_Print(tstate);\n        return _PyStatus_ERR("external importer setup failed");'
+          import_capture = (
+              "        PyObject *type = NULL;\n"
+              "        PyObject *value = NULL;\n"
+              "        PyObject *traceback = NULL;\n"
+              "        PyErr_Fetch(&type, &value, &traceback);\n"
+              "        PyObject *type_name = type ? PyObject_GetAttrString(type, \"__name__\") : NULL;\n"
+              "        PyObject *message = value ? PyObject_Str(value) : NULL;\n"
+              "        const char *type_text = type_name ? PyUnicode_AsUTF8(type_name) : NULL;\n"
+              "        const char *message_text = message ? PyUnicode_AsUTF8(message) : NULL;\n"
+              "        FILE *log = fopen(\"/data/renpy/import-error.log\", \"w\");\n"
+              "        if (log) {\n"
+              "            fprintf(log, \"importlib exception: %s: %s\\n\",\n"
+              "                    type_text ? type_text : \"unknown\",\n"
+              "                    message_text ? message_text : \"no exception text\");\n"
+              "            fclose(log);\n"
+              "        }\n"
+              "        Py_XDECREF(type_name);\n"
+              "        Py_XDECREF(message);\n"
+              "        PyErr_Restore(type, value, traceback);\n"
+          )
+          if import_source.count(import_include) != 1 or import_source.count(import_needle) != 1:
+              raise SystemExit("No pude identificar de forma unica el error de importlib esperado")
+          import_source = import_source.replace(import_include, import_include + "#include <stdio.h>\n", 1)
+          import_path.write_text(import_source.replace(import_needle, import_capture + import_needle, 1))
           PY
 
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
