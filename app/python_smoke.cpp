@@ -8,6 +8,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+// Stub: la libc de OpenOrbis referencia sceNetGetDnsInfo (usada por _socket/getaddrinfo) y no la enlazamos.
+extern "C" int sceNetGetDnsInfo(int, void*) { return -1; }
+
 static FILE* g_log = nullptr;
 
 static void log_message(const char* format, ...) {
@@ -225,9 +228,28 @@ int main() {
     static const char* const modules[] = {
         "os", "json", "collections", "copyreg", "math", "_struct", "binascii", "zlib", "select",
         "_socket", "_random", "_datetime", "_json", "array", "unicodedata",
-        "_pickle", "_hashlib", "_md5", "_sha1", "_sha2", "hashlib",
+        "_pickle", "_hashlib", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "hashlib",
+        "_bisect", "_heapq", "_contextvars", "_csv", "_queue", "_opcode", "_statistics",
+        "cmath", "_zoneinfo", "_asyncio", "socket", "re", "time", "itertools", "_thread",
+        "threading", "datetime", "random", "pickle", "zipfile", "tempfile", "ast", "enum",
     };
     for (const char* module : modules) probe_module(module);
+
+    probe_expression("md5(abc)", "__import__('hashlib').md5(b'abc').hexdigest()", globals);
+    probe_expression("sha256(abc)", "__import__('hashlib').sha256(b'abc').hexdigest()", globals);
+    probe_expression("zlib roundtrip",
+                     "(lambda z: z.decompress(z.compress(b'hello'*100)) == b'hello'*100)(__import__('zlib'))",
+                     globals);
+    probe_expression("crc32(abc)", "__import__('zlib').crc32(b'abc')", globals);
+    probe_expression("sys.platform", "__import__('sys').platform", globals);
+    probe_expression("listdir assets", "__import__('os').listdir('/app0/assets')", globals);
+    probe_expression("write /data",
+                     "(lambda f: (f.write('ok'), f.close()))(open('/data/renpy/py-write-test.txt', 'w'))",
+                     globals);
+    probe_expression("re.sub", "__import__('re').sub(r'a+', 'X', 'caaat')", globals);
+    probe_expression("thread",
+                     "(lambda t: (t.start(), t.join(), t.is_alive()))(__import__('threading').Thread(target=lambda: None))",
+                     globals);
 
     log_message("PYTHON_SMOKE_OK result=42");
     const int finalize_status = Py_FinalizeEx();
