@@ -524,9 +524,41 @@ jobs:
       - name: Preparar biblioteca estandar para la prueba
         run: |
           set -euo pipefail
-          mkdir -p dist-python
+          mkdir -p dist-python stubs-lib
           (cd cpython/Lib && zip -0 -q -r "$GITHUB_WORKSPACE/dist-python/python312.zip" . \
             -x 'test/*' '*/test/*' '*/tests/*' 'idlelib/*' 'tkinter/*' 'turtledemo/*' 'ensurepip/*' 'lib2to3/*' '*/__pycache__/*')
+          # Modulos que CPython esperaria generados por 'make' completo y que aqui no existen:
+          # - _posixsubprocess: la PS4 no tiene fork/exec; subprocess y asyncio lo importan. Stub que falla al usarlo.
+          # - _sysconfigdata__linux_: sysconfig (lo importa zoneinfo, platform...) lo busca; sys.platform sale 'linux'
+          #   por el truco de --host del configure. Version minima con lo que la stdlib suele consultar.
+          cat > stubs-lib/_posixsubprocess.py <<'EOF'
+          def fork_exec(*args, **kwargs):
+              raise OSError(38, "fork/exec no soportado en PS4")
+          EOF
+          cat > stubs-lib/_sysconfigdata__linux_.py <<'EOF'
+          build_time_vars = {
+              'ABIFLAGS': '',
+              'SOABI': 'cpython-312-ps4',
+              'EXT_SUFFIX': '.cpython-312-ps4.so',
+              'SHLIB_SUFFIX': '.so',
+              'MULTIARCH': '',
+              'HOST_GNU_TYPE': 'x86_64-pc-ps4',
+              'Py_DEBUG': 0,
+              'Py_GIL_DISABLED': 0,
+              'WITH_DOC_STRINGS': 0,
+              'VERSION': '3.12',
+              'py_version_nodot': '312',
+              'prefix': '/app0',
+              'exec_prefix': '/app0',
+              'LIBDIR': '/app0/lib',
+              'TZPATH': '',
+              'CC': 'orbis-cc',
+              'CFLAGS': '',
+              'LDFLAGS': '',
+          }
+          EOF
+          (cd stubs-lib && zip -0 -q "$GITHUB_WORKSPACE/dist-python/python312.zip" _posixsubprocess.py _sysconfigdata__linux_.py)
+          unzip -l dist-python/python312.zip | tail -1
 
       - name: Construir PKG de prueba Python
         run: |
