@@ -302,6 +302,51 @@ jobs:
 
           PY
 
+      # struct stat de OpenOrbis (bits/stat.h) usa mode_t de 4 bytes y desplaza los campos 8 bytes respecto al kernel
+      # de la PS4 (st_size leia st_blocks). Se sobreescribe con el layout real; $HOME/stubs va antes que $OO/include.
+      # Ademas, get/set_inheritable de CPython usan fcntl(F_GETFD), sospechoso del EINVAL en open(): se anulan.
+      - name: Parche stat e inheritable (PS4)
+        run: |
+          mkdir -p "$HOME/stubs/bits"
+          cat > "$HOME/stubs/bits/stat.h" <<'EOF'
+          #include <stdint.h>
+          struct stat {
+              uint32_t st_dev;
+              uint32_t st_ino;
+              uint16_t st_mode;
+              uint16_t st_nlink;
+              uint32_t st_uid;
+              uint32_t st_gid;
+              uint32_t st_rdev;
+              struct timespec st_atim;
+              struct timespec st_mtim;
+              struct timespec st_ctim;
+              int64_t  st_size;
+              int64_t  st_blocks;
+              uint32_t st_blksize;
+              uint32_t st_flags;
+              uint32_t st_gen;
+              int32_t  st_lspare;
+              struct timespec st_birthtim;
+          };
+          EOF
+          python3.12 - <<'PY'
+          from pathlib import Path
+          p = Path("cpython/Python/fileutils.c")
+          s = p.read_text()
+          sigs = {
+              "static int\nget_inheritable(int fd, int raise)\n{\n":
+                  "    (void)fd; (void)raise;\n    return 0;\n",
+              "static int\nset_inheritable(int fd, int inheritable, int raise, int *atomic_flag_works)\n{\n":
+                  "    (void)fd; (void)inheritable; (void)raise; (void)atomic_flag_works;\n    return 0;\n",
+          }
+          for sig, body in sigs.items():
+              if s.count(sig) != 1:
+                  raise SystemExit("No encuentro de forma unica: " + sig)
+              s = s.replace(sig, sig + body, 1)
+          p.write_text(s)
+          PY
+
       # Compilador "envoltorio": configure necesita compilar Y enlazar ejecutables de prueba.
       # Con -c/-E/-S solo compila; en cualquier otro caso anade el script de enlace y crt1.o de OpenOrbis.
       - name: Crear compilador envoltorio (orbis-cc)
