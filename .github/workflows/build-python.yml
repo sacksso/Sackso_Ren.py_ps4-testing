@@ -280,25 +280,17 @@ jobs:
           unicode_source = unicode_source.replace(unicode_include, unicode_include + "#include <stdio.h>\n", 1)
           unicode_path.write_text(unicode_source.replace(unicode_needle, unicode_replacement, 1))
 
-          open_patches = (
-              ("cpython/Python/fileutils.c",
-               "#ifdef O_CLOEXEC\n/* Does open() support the O_CLOEXEC flag? Possible values:\n"),
-              ("cpython/Modules/posixmodule.c",
-               "#ifdef O_CLOEXEC\nextern int _Py_open_cloexec_works;\n#endif\n"),
-              ("cpython/Modules/_io/fileio.c",
-               "#ifdef O_CLOEXEC\nextern int _Py_open_cloexec_works;\n#endif\n"),
+          open_flag_patches = (
+              ("cpython/Python/fileutils.c", "    flags |= O_CLOEXEC;\n"),
+              ("cpython/Modules/posixmodule.c", "    flags |= O_CLOEXEC;\n"),
+              ("cpython/Modules/_io/fileio.c", "    flags |= O_CLOEXEC;\n"),
           )
-          for filename, needle in open_patches:
+          for filename, needle in open_flag_patches:
               path = Path(filename)
               source = path.read_text()
               if source.count(needle) != 1:
-                  raise SystemExit(f"No pude identificar de forma unica el bloque O_CLOEXEC en {filename}")
-              workaround = (
-                  "#ifdef __FreeBSD__\n"
-                  "#undef O_CLOEXEC\n"
-                  "#endif\n"
-              )
-              path.write_text(source.replace(needle, workaround + needle, 1))
+                  raise SystemExit(f"No pude identificar de forma unica la flag O_CLOEXEC en {filename}")
+              path.write_text(source.replace(needle, "", 1))
 
           freeze_path = Path("cpython/Tools/build/freeze_modules.py")
           freeze_source = freeze_path.read_text()
