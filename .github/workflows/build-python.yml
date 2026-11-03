@@ -334,6 +334,13 @@ jobs:
               struct timespec st_birthtim;
           };
           EOF
+          # HACL* (md5/sha1/sha2/sha3) hace #include <sys/endian.h> en la rama __FreeBSD__ y OpenOrbis solo trae
+          # <endian.h> (estilo musl, con htobe*/le*toh incluidos). Se redirige.
+          mkdir -p "$HOME/stubs/sys"
+          cat > "$HOME/stubs/sys/endian.h" <<'EOF'
+          #pragma once
+          #include <endian.h>
+          EOF
           python3.12 - <<'PY'
           from pathlib import Path
           p = Path("cpython/Python/fileutils.c")
