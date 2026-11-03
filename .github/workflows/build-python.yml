@@ -27,6 +27,10 @@ on:
         description: 'Hilos de make'
         type: string
         default: '4'
+      socket:
+        description: 'Incluir modulo _socket (true/false). Poner false si falla el enlace por simbolos de red'
+        type: string
+        default: 'true'
 
 env:
   GH_TOKEN: ${{ github.token }}
@@ -402,6 +406,29 @@ jobs:
           sed -i 's/direntp->d_ino/0/g' cpython/Modules/posixmodule.c
           echo "Tras el parche: $(grep -c 'direntp->d_ino' cpython/Modules/posixmodule.c) usos restantes" | tee -a logs-python/dirent.txt
 
+      # zlib estatica: CPython la necesita para el modulo zlib (Ren'Py la usa en .rpa y guardados).
+      # Se compilan solo los ficheros de compresion (sin gz*, que pide funciones de fichero extra).
+      # Los .o se fusionan despues dentro de libpython3.12.a para que el PKG no necesite -lz.
+      - name: Compilar zlib estatica
+        run: |
+          set -euo pipefail
+          Z=1.3.1
+          ok=0
+          for u in "https://github.com/madler/zlib/releases/download/v${Z}/zlib-${Z}.tar.gz" \
+                   "https://zlib.net/zlib-${Z}.tar.gz"; do
+            if wget -q "$u" -O zlib.tgz; then ok=1; echo "Descargado: $u"; break; fi
+          done
+          [ "$ok" = 1 ] || { echo "::error::No pude descargar zlib"; exit 1; }
+          tar -xf zlib.tgz
+          mkdir -p "$HOME/zlib/include" "$HOME/zlib/obj"
+          cd "zlib-${Z}"
+          for f in adler32 compress crc32 deflate infback inffast inflate inftrees trees uncompr zutil; do
+            orbis-cc -O2 -DHAVE_UNISTD_H -c "$f.c" -o "$HOME/zlib/obj/$f.o"
+          done
+          llvm-ar rcs "$HOME/zlib/libz.a" "$HOME/zlib/obj/"*.o
+          cp zlib.h zconf.h "$HOME/zlib/include/"
+          ls -l "$HOME/zlib/libz.a" | tee "$GITHUB_WORKSPACE/logs-python/zlib.txt"
+
       # Valores que configure no puede averiguar al cross-compilar (no puede ejecutar nada de la PS4).
       - name: config.site
         run: |
@@ -441,21 +468,39 @@ jobs:
 
       - name: Configurar módulos builtin
         run: |
-          mkdir -p build/Modules
+          mkdir -p build/Modules build/Modules/_hacl build/Modules/_blake2 build/Modules/_sha3
           cat > build/Modules/Setup.local <<'EOF'
           *static*
+          _asyncio _asynciomodule.c
+          _bisect _bisectmodule.c
+          _contextvars _contextvarsmodule.c
+          _csv _csv.c
           _datetime _datetimemodule.c
+          _heapq _heapqmodule.c
           _json _json.c
+          _opcode _opcode.c
           _pickle _pickle.c
+          _queue _queuemodule.c
           _random _randommodule.c
+          _statistics _statisticsmodule.c
           _struct _struct.c
+          _zoneinfo _zoneinfo.c
           array arraymodule.c
           binascii binascii.c -UUSE_ZLIB_CRC32
+          cmath cmathmodule.c
           math mathmodule.c
           select selectmodule.c
           unicodedata unicodedata.c
+          _md5 md5module.c -I$(srcdir)/Modules/_hacl/include _hacl/Hacl_Hash_MD5.c -D_BSD_SOURCE -D_DEFAULT_SOURCE
+          _sha1 sha1module.c -I$(srcdir)/Modules/_hacl/include _hacl/Hacl_Hash_SHA1.c -D_BSD_SOURCE -D_DEFAULT_SOURCE
+          _sha2 sha2module.c -I$(srcdir)/Modules/_hacl/include _hacl/Hacl_Hash_SHA2.c -D_BSD_SOURCE -D_DEFAULT_SOURCE
+          _sha3 sha3module.c -I$(srcdir)/Modules/_hacl/include _hacl/Hacl_Hash_SHA3.c -D_BSD_SOURCE -D_DEFAULT_SOURCE
+          _blake2 _blake2/blake2module.c _blake2/blake2b_impl.c _blake2/blake2s_impl.c
           EOF
-          sed -i 's/^          //' build/Modules/Setup.local
+          echo "zlib zlibmodule.c -I$HOME/zlib/include -DHAVE_ZLIB_COPY" >> build/Modules/Setup.local
+          if [ "${{ inputs.socket }}" = "true" ]; then
+            echo "_socket socketmodule.c" >> build/Modules/Setup.local
+          fi
           cp build/Modules/Setup.local logs-python/modules-setup.txt
 
       - name: Compilar libpython (solo la libreria estatica)
@@ -464,6 +509,7 @@ jobs:
           set +e
           make -k -j"${{ inputs.jobs }}" libpython3.12.a 2>&1 | tee "$GITHUB_WORKSPACE/logs-python/make.log"
           echo "make rc=${PIPESTATUS[0]}" | tee -a "$GITHUB_WORKSPACE/logs-python/make.log"
+          if [ -f libpython3.12.a ]; then llvm-ar rcs libpython3.12.a "$HOME"/zlib/obj/*.o; fi
           mkdir -p "$GITHUB_WORKSPACE/dist-python"
           cp libpython3*.a "$GITHUB_WORKSPACE/dist-python/" 2>/dev/null || true
           [ -f libpython3.12.a ] || { echo "::error::No se genero libpython3.12.a. Mira logs-python/make.log"; exit 1; }
@@ -472,7 +518,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-python
-          (cd cpython/Lib && zip -0 -q -r "$GITHUB_WORKSPACE/dist-python/python312.zip" .)
+          (cd cpython/Lib && zip -0 -q -r "$GITHUB_WORKSPACE/dist-python/python312.zip" . \
+            -x 'test/*' '*/test/*' '*/tests/*' 'idlelib/*' 'tkinter/*' 'turtledemo/*' 'ensurepip/*' 'lib2to3/*' '*/__pycache__/*')
 
       - name: Construir PKG de prueba Python
         run: |
