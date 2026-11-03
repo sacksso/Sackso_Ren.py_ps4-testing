@@ -5,6 +5,8 @@
 #include <cerrno>
 #include <cstring>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static FILE* g_log = nullptr;
 
@@ -97,6 +99,23 @@ int main() {
         log_message("STDLIB_OPEN_OK size=%ld signature=%02x%02x%02x%02x bytes=%zu",
                     stdlib_size, signature[0], signature[1], signature[2], signature[3], signature_size);
         fclose(stdlib);
+    }
+
+    {
+        int fd = open("/app0/assets/stdlib.zip", O_RDONLY);
+        log_message("DIAG open fd=%d errno=%d", fd, errno);
+        if (fd >= 0) {
+            errno = 0; int g = fcntl(fd, F_GETFD, 0);
+            log_message("DIAG fcntl F_GETFD=%d errno=%d", g, errno);
+            errno = 0; int s = fcntl(fd, F_SETFD, FD_CLOEXEC);
+            log_message("DIAG fcntl F_SETFD=%d errno=%d", s, errno);
+            close(fd);
+        }
+        struct stat st;
+        if (stat("/app0/assets/stdlib.zip", &st) == 0) {
+            log_message("DIAG sizeof(stat)=%zu st_size=%lld st_blocks=%lld",
+                        sizeof(struct stat), (long long)st.st_size, (long long)st.st_blocks);
+        }
     }
 
     PyConfig config;
