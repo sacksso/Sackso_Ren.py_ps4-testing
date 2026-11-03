@@ -1,0 +1,284 @@
+name: Build deps (PS4)
+
+# PASO 4: compilar las dependencias nativas de pygame_sdl2 / Ren'Py como librerias ESTATICAS con OpenOrbis:
+#   zlib, libpng, libjpeg-turbo, FreeType, HarfBuzz y SDL2_ttf.
+# (SDL2 y SDL2_image YA vienen compilados en el toolchain; SDL2_image trae PNG/JPG propio.)
+#
+# Cada libreria va en su propio paso con continue-on-error: si una falla, las demas siguen.
+# Al final se sube:
+#   - 'deps-ps4'  : include/ y lib/ con todo lo que SI compilo
+#   - 'logs-deps' : un .txt por libreria + resumen.txt (OK/FALLO de cada una)
+# Estas librerias se han comprobado a nivel de COMPILACION de cada .c con las cabeceras de OpenOrbis,
+# pero no se ha enlazado ni ejecutado nada en la PS4: pasame 'logs-deps' si algo falla.
+#
+# Colocar en: .github/workflows/build-deps.yml
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain_tag:
+        description: 'Tag del release de OpenOrbis (latest = el ultimo)'
+        type: string
+        default: 'latest'
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  deps:
+    name: Dependencias estaticas para PS4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Clonar el repo
+        uses: actions/checkout@v4
+
+      - name: Dependencias
+        run: |
+          mkdir -p logs-deps
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm make zip unzip pkg-config
+          { clang --version | head -1; llvm-ar --version | head -1; } 2>&1 | tee logs-deps/versions.txt
+          echo "DEPS=$HOME/deps" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/deps/include" "$HOME/deps/lib"
+
+      - name: Descargar el toolchain de OpenOrbis
+        env:
+          TAG: ${{ inputs.toolchain_tag }}
+        run: |
+          set -euo pipefail
+          repo=OpenOrbis/OpenOrbis-PS4-Toolchain
+          if [ "$TAG" = "latest" ]; then ep="repos/$repo/releases/latest"; else ep="repos/$repo/releases/tags/$TAG"; fi
+          gh api "$ep" > release.json
+          tag=$(jq -r .tag_name release.json)
+          asset=$(jq -r '[.assets[].name | select(test("linux";"i")) | select(test("\\.(tar\\.gz|tgz|zip)$";"i"))][0] // empty' release.json)
+          if [ -z "$asset" ]; then
+            asset=$(jq -r '[.assets[].name | select(test("\\.(tar\\.gz|tgz|zip)$";"i")) | select(test("windows|macos|win|mac|installer";"i") | not)][0] // empty' release.json)
+          fi
+          [ -n "$asset" ] || { echo "::error::No encontre asset de toolchain"; exit 1; }
+          echo "Release $tag, asset $asset"
+          gh release download "$tag" --repo "$repo" --pattern "$asset" --dir dl
+          mkdir -p "$HOME/oo"
+          case "$asset" in
+            *.zip) unzip -q "dl/$asset" -d "$HOME/oo" ;;
+            *)     tar -xf "dl/$asset" -C "$HOME/oo" ;;
+          esac
+          bl=$(find "$HOME/oo" -type d -path '*/bin/linux' | head -1)
+          root=$(dirname "$(dirname "$bl")")
+          echo "OO_PS4_TOOLCHAIN=$root" >> "$GITHUB_ENV"
+          echo "Toolchain en: $root"
+
+      # Compiladores "envoltorio" (solo se usan para compilar con -c; no se enlaza nada aqui).
+      # Stubs imprescindibles descubiertos al portar CPython:
+      #  - bits/stat.h: el struct stat de OpenOrbis usa mode_t de 4 bytes y desplaza los campos 8 bytes respecto al
+      #    kernel de la PS4 (st_size leia st_blocks). Esta version tiene el layout real (120 bytes).
+      #  - sys/endian.h: algunas librerias (HACL, etc.) lo piden en la rama __FreeBSD__; OpenOrbis solo trae <endian.h>.
+      - name: Crear compiladores envoltorio (orbis-cc / orbis-cxx)
+        run: |
+          mkdir -p "$HOME/bin" "$HOME/stubs/bits" "$HOME/stubs/sys"
+          cat > "$HOME/stubs/bits/stat.h" <<'EOF'
+          #include <stdint.h>
+          struct stat {
+              uint32_t st_dev;
+              uint32_t st_ino;
+              uint16_t st_mode;
+              uint16_t st_nlink;
+              uint32_t st_uid;
+              uint32_t st_gid;
+              uint32_t st_rdev;
+              struct timespec st_atim;
+              struct timespec st_mtim;
+              struct timespec st_ctim;
+              int64_t  st_size;
+              int64_t  st_blocks;
+              uint32_t st_blksize;
+              uint32_t st_flags;
+              uint32_t st_gen;
+              int32_t  st_lspare;
+              struct timespec st_birthtim;
+          };
+          EOF
+          cat > "$HOME/stubs/sys/endian.h" <<'EOF'
+          #pragma once
+          #include <endian.h>
+          EOF
+          cat > "$HOME/bin/orbis-cc" <<'EOF'
+          #!/bin/bash
+          OO="$OO_PS4_TOOLCHAIN"
+          exec clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -fshort-wchar -isysroot "$OO" -isystem "$HOME/stubs" -isystem "$OO/include" "$@"
+          EOF
+          cat > "$HOME/bin/orbis-cxx" <<'EOF'
+          #!/bin/bash
+          OO="$OO_PS4_TOOLCHAIN"
+          exec clang++ --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -fshort-wchar -nostdinc++ -isysroot "$OO" -isystem "$HOME/stubs" -isystem "$OO/include/c++/v1" -isystem "$OO/include" "$@"
+          EOF
+          sed -i 's/^          //' "$HOME/bin/orbis-cc" "$HOME/bin/orbis-cxx"
+          chmod +x "$HOME/bin/orbis-cc" "$HOME/bin/orbis-cxx"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: zlib
+        id: zlib
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/logs-deps/zlib.txt") 2>&1
+          Z=1.3.1
+          wget -q "https://github.com/madler/zlib/releases/download/v${Z}/zlib-${Z}.tar.gz" -O zlib.tgz
+          tar -xf zlib.tgz && cd "zlib-${Z}"
+          mkdir -p obj
+          for f in adler32 compress crc32 deflate infback inffast inflate inftrees trees uncompr zutil; do
+            orbis-cc -O2 -DHAVE_UNISTD_H -c "$f.c" -o "obj/$f.o"
+          done
+          llvm-ar rcs "$DEPS/lib/libz.a" obj/*.o
+          cp zlib.h zconf.h "$DEPS/include/"
+          ls -l "$DEPS/lib/libz.a"
+
+      - name: libpng 1.6.44
+        id: png
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/logs-deps/libpng.txt") 2>&1
+          wget -q "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.44.tar.gz" -O png.tgz
+          mkdir png && tar -xf png.tgz -C png --strip-components=1 && cd png
+          cp scripts/pnglibconf.h.prebuilt pnglibconf.h
+          mkdir -p obj
+          for f in png pngerror pngget pngmem pngpread pngread pngrio pngrtran pngrutil pngset pngtrans pngwio pngwrite pngwtran pngwutil; do
+            orbis-cc -O2 -I. -I"$DEPS/include" -c "$f.c" -o "obj/$f.o"
+          done
+          llvm-ar rcs "$DEPS/lib/libpng.a" obj/*.o
+          cp png.h pngconf.h pnglibconf.h "$DEPS/include/"
+          ls -l "$DEPS/lib/libpng.a"
+
+      # libjpeg-turbo 2.1.x sin SIMD (jsimd_none.c). Las cabeceras que CMake generaria se generan aqui con sed.
+      - name: libjpeg-turbo 2.1.5.1
+        id: jpeg
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/logs-deps/libjpeg.txt") 2>&1
+          wget -q "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/2.1.5.1.tar.gz" -O jpg.tgz
+          mkdir jpg && tar -xf jpg.tgz -C jpg --strip-components=1 && cd jpg
+          sed -e 's/@JPEG_LIB_VERSION@/62/' -e 's/@VERSION@/2.1.5.1/' -e 's/@LIBJPEG_TURBO_VERSION_NUMBER@/2001005/' \
+              -e 's/@BITS_IN_JSAMPLE@/8/' \
+              -e 's/#cmakedefine C_ARITH_CODING_SUPPORTED 1/#define C_ARITH_CODING_SUPPORTED 1/' \
+              -e 's/#cmakedefine D_ARITH_CODING_SUPPORTED 1/#define D_ARITH_CODING_SUPPORTED 1/' \
+              -e 's/#cmakedefine MEM_SRCDST_SUPPORTED 1/#define MEM_SRCDST_SUPPORTED 1/' \
+              -e 's|#cmakedefine WITH_SIMD 1|/* #undef WITH_SIMD */|' \
+              -e 's|#cmakedefine RIGHT_SHIFT_IS_UNSIGNED 1|/* #undef RIGHT_SHIFT_IS_UNSIGNED */|' \
+              jconfig.h.in > jconfig.h
+          sed -e 's/@BUILD@/ps4/' -e 's/@INLINE@/inline/' -e 's/@THREAD_LOCAL@//' -e 's/@CMAKE_PROJECT_NAME@/libjpeg-turbo/' \
+              -e 's/@VERSION@/2.1.5.1/' -e 's/@SIZE_T@/8/' \
+              -e 's|#cmakedefine HAVE_BUILTIN_CTZL|#define HAVE_BUILTIN_CTZL 1|' \
+              -e 's|#cmakedefine HAVE_INTRIN_H|/* #undef HAVE_INTRIN_H */|' \
+              jconfigint.h.in > jconfigint.h
+          sed -e 's/@COPYRIGHT_YEAR@/2022/' jversion.h.in > jversion.h
+          mkdir -p obj
+          for s in jcapimin jcapistd jccoefct jccolor jcdctmgr jchuff jcicc jcinit jcmainct jcmarker jcmaster jcomapi jcparam \
+                   jcphuff jcprepct jcsample jctrans jdapimin jdapistd jdatadst jdatasrc jdcoefct jdcolor jddctmgr jdhuff jdicc \
+                   jdinput jdmainct jdmarker jdmaster jdmerge jdphuff jdpostct jdsample jdtrans jerror jfdctflt jfdctfst jfdctint \
+                   jidctflt jidctfst jidctint jidctred jquant1 jquant2 jutils jmemmgr jmemnobs jaricom jcarith jdarith jsimd_none; do
+            orbis-cc -O2 -I. -c "$s.c" -o "obj/$s.o"
+          done
+          llvm-ar rcs "$DEPS/lib/libjpeg.a" obj/*.o
+          cp jconfig.h jerror.h jmorecfg.h jpeglib.h "$DEPS/include/"
+          ls -l "$DEPS/lib/libjpeg.a"
+
+      # FreeType compilado "a mano" (sin configure) con una lista de modulos propia: TrueType, Type1, CFF, autohinter,
+      # raster y smooth. Se dejan fuera SVG/SDF/PCF/BDF/etc. Usa la zlib del sistema (libz.a de arriba).
+      - name: FreeType 2.13.3
+        id: freetype
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/logs-deps/freetype.txt") 2>&1
+          wget -q "https://github.com/freetype/freetype/archive/refs/tags/VER-2-13-3.tar.gz" -O ft.tgz
+          mkdir ft && tar -xf ft.tgz -C ft --strip-components=1 && cd ft
+          cat > include/freetype/config/ftmodule.h <<'EOF'
+          FT_USE_MODULE( FT_Module_Class, autofit_module_class )
+          FT_USE_MODULE( FT_Driver_ClassRec, tt_driver_class )
+          FT_USE_MODULE( FT_Driver_ClassRec, t1_driver_class )
+          FT_USE_MODULE( FT_Driver_ClassRec, cff_driver_class )
+          FT_USE_MODULE( FT_Module_Class, psaux_module_class )
+          FT_USE_MODULE( FT_Module_Class, psnames_module_class )
+          FT_USE_MODULE( FT_Module_Class, pshinter_module_class )
+          FT_USE_MODULE( FT_Module_Class, sfnt_module_class )
+          FT_USE_MODULE( FT_Renderer_Class, ft_smooth_renderer_class )
+          FT_USE_MODULE( FT_Renderer_Class, ft_raster1_renderer_class )
+          EOF
+          mkdir -p obj
+          for s in src/base/ftsystem src/base/ftinit src/base/ftdebug src/base/ftbase src/base/ftbbox src/base/ftbitmap \
+                   src/base/ftfstype src/base/ftgasp src/base/ftglyph src/base/ftlcdfil src/base/ftmm src/base/ftpatent \
+                   src/base/ftstroke src/base/ftsynth src/base/fttype1 src/base/ftwinfnt src/base/ftotval src/base/ftgxval \
+                   src/gzip/ftgzip src/truetype/truetype src/type1/type1 src/cff/cff src/sfnt/sfnt src/autofit/autofit \
+                   src/pshinter/pshinter src/raster/raster src/smooth/smooth src/psaux/psaux src/psnames/psnames; do
+            orbis-cc -O2 -DFT2_BUILD_LIBRARY -DFT_CONFIG_OPTION_SYSTEM_ZLIB -Iinclude -I"$DEPS/include" \
+              -c "$s.c" -o "obj/$(basename "$s").o"
+          done
+          llvm-ar rcs "$DEPS/lib/libfreetype.a" obj/*.o
+          mkdir -p "$DEPS/include/freetype2"
+          cp -r include/* "$DEPS/include/freetype2/"
+          ls -l "$DEPS/lib/libfreetype.a"
+
+      # HarfBuzz en "unity build" (un solo .cc), sin hilos (HB_NO_MT), excepciones ni RTTI, con soporte FreeType (hb-ft).
+      - name: HarfBuzz 10.1.0
+        id: harfbuzz
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/logs-deps/harfbuzz.txt") 2>&1
+          wget -q "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/10.1.0.tar.gz" -O hb.tgz
+          mkdir hb && tar -xf hb.tgz -C hb --strip-components=1 && cd hb
+          orbis-cxx -std=c++17 -O2 -g0 -DNDEBUG -fno-exceptions -fno-rtti -DHB_NO_MT -DHAVE_FREETYPE=1 \
+            -I"$DEPS/include/freetype2" -Isrc -c src/harfbuzz.cc -o harfbuzz.o
+          llvm-ar rcs "$DEPS/lib/libharfbuzz.a" harfbuzz.o
+          mkdir -p "$DEPS/include/harfbuzz"
+          cp src/hb*.h "$DEPS/include/harfbuzz/"
+          ls -l "$DEPS/lib/libharfbuzz.a"
+
+      - name: SDL2_ttf 2.0.15
+        id: sdlttf
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/logs-deps/sdl2_ttf.txt") 2>&1
+          wget -q "https://github.com/libsdl-org/SDL_ttf/archive/refs/tags/release-2.0.15.tar.gz" -O sdlttf.tgz
+          mkdir sdlttf && tar -xf sdlttf.tgz -C sdlttf --strip-components=1 && cd sdlttf
+          orbis-cc -O2 -I. -I"$OO_PS4_TOOLCHAIN/include/SDL2" -I"$DEPS/include/freetype2" -I"$DEPS/include" \
+            -c SDL_ttf.c -o SDL_ttf.o
+          llvm-ar rcs "$DEPS/lib/libSDL2_ttf.a" SDL_ttf.o
+          mkdir -p "$DEPS/include/SDL2"
+          cp SDL_ttf.h "$DEPS/include/SDL2/"
+          ls -l "$DEPS/lib/libSDL2_ttf.a"
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "zlib       : ${{ steps.zlib.outcome }}"
+            echo "libpng     : ${{ steps.png.outcome }}"
+            echo "libjpeg    : ${{ steps.jpeg.outcome }}"
+            echo "freetype   : ${{ steps.freetype.outcome }}"
+            echo "harfbuzz   : ${{ steps.harfbuzz.outcome }}"
+            echo "SDL2_ttf   : ${{ steps.sdlttf.outcome }}"
+            echo
+            ls -l "$DEPS/lib"
+          } | tee logs-deps/resumen.txt
+          mkdir -p deps-out
+          cp -r "$DEPS/include" "$DEPS/lib" deps-out/ || true
+
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-deps
+          path: logs-deps/
+          if-no-files-found: warn
+
+      - name: Subir librerias
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-ps4
+          path: deps-out/
+          if-no-files-found: warn
